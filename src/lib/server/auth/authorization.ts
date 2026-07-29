@@ -20,6 +20,16 @@ export function relatedReadAccess(
   };
 }
 
+export function canAdministerPermissions(
+  administrator: readonly string[],
+  target: readonly string[],
+) {
+  return (
+    administrator.includes("*") ||
+    target.every((permission) => administrator.includes(permission))
+  );
+}
+
 export function requirePagePermission(
   actor: App.Locals["actor"],
   permission: Permission,

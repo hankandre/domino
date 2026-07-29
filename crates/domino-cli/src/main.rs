@@ -19,6 +19,7 @@ use tokio::{
     sync::Semaphore,
     time::timeout,
 };
+use url::Host;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 const MAX_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
@@ -345,10 +346,7 @@ fn origin_with_policy(value: &str, allow_insecure_http: bool) -> Result<String> 
     if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
         return Err("server must be an HTTP(S) origin".into());
     }
-    if url.scheme() == "http"
-        && !url.host_str().is_some_and(is_loopback_host)
-        && !allow_insecure_http
-    {
+    if url.scheme() == "http" && !url.host().is_some_and(is_loopback_host) && !allow_insecure_http {
         return Err(
             "remote Domino servers must use HTTPS (set DOMINO_ALLOW_INSECURE_HTTP=true only for a trusted internal network)"
                 .into(),
@@ -357,11 +355,12 @@ fn origin_with_policy(value: &str, allow_insecure_http: bool) -> Result<String> 
     Ok(url.origin().ascii_serialization())
 }
 
-fn is_loopback_host(host: &str) -> bool {
-    host.eq_ignore_ascii_case("localhost")
-        || host == "127.0.0.1"
-        || host == "::1"
-        || host.starts_with("127.")
+fn is_loopback_host(host: Host<&str>) -> bool {
+    match host {
+        Host::Domain(host) => host.eq_ignore_ascii_case("localhost"),
+        Host::Ipv4(address) => address.is_loopback(),
+        Host::Ipv6(address) => address.is_loopback(),
+    }
 }
 
 fn hardened_client() -> Result<Client> {
@@ -1273,6 +1272,9 @@ mod tests {
     fn origin_rejects_remote_plaintext_http_by_default() {
         assert!(origin_with_policy("http://domino.example.test", false).is_err());
         assert!(origin_with_policy("http://127.0.0.1:3000", false).is_ok());
+        assert!(origin_with_policy("http://127.0.0.2:3000", false).is_ok());
+        assert!(origin_with_policy("http://[::1]:3000", false).is_ok());
+        assert!(origin_with_policy("http://127.attacker.example", false).is_err());
     }
 
     #[test]

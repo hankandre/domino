@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  canAdministerPermissions,
   hasPermission,
   requireAnyPagePermission,
   requirePagePermission,
@@ -15,6 +16,22 @@ function actor(permissions: string[]): NonNullable<App.Locals["actor"]> {
 }
 
 describe("page authorization", () => {
+  test("only administers roles within the administrator's authority", () => {
+    expect(
+      canAdministerPermissions(
+        ["household:manage", "claims:read"],
+        ["claims:read"],
+      ),
+    ).toBe(true);
+    expect(
+      canAdministerPermissions(
+        ["household:manage", "claims:read"],
+        ["claims:read", "claims:write"],
+      ),
+    ).toBe(false);
+    expect(canAdministerPermissions(["*"], ["claims:write"])).toBe(true);
+  });
+
   test("accepts an explicit permission or wildcard", () => {
     expect(hasPermission(actor(["claims:read"]), "claims:read")).toBe(true);
     expect(hasPermission(actor(["*"]), "claims:read")).toBe(true);
