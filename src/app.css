@@ -4,9 +4,9 @@
   --color-paper: #f5f3ed;
   --color-sheet: #fffefa;
   --color-ink: #172033;
-  --color-muted: #687184;
+  --color-muted: #626a7b;
   --color-rule: #d8d9d3;
-  --color-orange: #e65322;
+  --color-orange: #c84318;
   --color-orange-soft: #fff0e8;
   --color-blue-soft: #eaf0f7;
   --color-green: #176b4d;
@@ -57,7 +57,12 @@ a {
 }
 
 :focus-visible {
-  outline: 3px solid color-mix(in srgb, var(--color-orange) 70%, white);
+  outline: 3px solid var(--color-ink);
+  outline-offset: 3px;
+}
+
+label:has(input.sr-only:focus-visible) {
+  outline: 3px solid var(--color-ink);
   outline-offset: 3px;
 }
 

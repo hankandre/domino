@@ -8,6 +8,13 @@ import {
 
 export const actions: Actions = {
   default: async ({ cookies, getClientAddress, request, url }) => {
+    const contentLength = Number(request.headers.get("content-length") ?? "0");
+    if (contentLength > 4_096) {
+      return fail(413, {
+        localError: "The sign-in request is too large.",
+        email: "",
+      });
+    }
     const form = await request.formData();
     const email = String(form.get("email") ?? "")
       .trim()
@@ -19,9 +26,14 @@ export const actions: Actions = {
         localError: "Email and password are required.",
         email,
       });
+    if (email.length > 254 || password.length > 256) {
+      return fail(400, {
+        localError: "Email or password is invalid.",
+        email: email.slice(0, 254),
+      });
+    }
 
-    const attemptKey = `${getClientAddress()}:${email}`;
-    if (!consumeLoginAttempt(attemptKey)) {
+    if (!consumeLoginAttempt(getClientAddress(), email)) {
       return fail(429, {
         localError: "Too many sign-in attempts. Wait 15 minutes and try again.",
         email,

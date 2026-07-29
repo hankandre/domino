@@ -51,7 +51,7 @@
       </p>
     </div>
 
-    <p class="text-xs leading-relaxed text-white/45">
+    <p class="text-xs leading-relaxed text-white/65">
       OIDC handles human sign-in. Restricted agents continue to use separately
       revocable service accounts.
     </p>

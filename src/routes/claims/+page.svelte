@@ -20,6 +20,8 @@
   }
 </script>
 
+<svelte:head><title>Claims · Domino</title></svelte:head>
+
 <div
   class="mx-auto w-full max-w-[1320px] px-4 py-6 sm:px-6 sm:py-8 lg:px-9 lg:py-9"
 >

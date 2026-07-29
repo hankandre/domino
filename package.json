@@ -1,6 +1,6 @@
 {
   "name": "domino",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -37,6 +37,7 @@
     "prettier-plugin-svelte": "^4.1.1",
     "svelte": "^5.56.8",
     "svelte-check": "^4.7.4",
+    "swagger-ui-dist": "^5.31.0",
     "tailwindcss": "^4.3.3",
     "typescript": "5.9.3",
     "vite": "^8.1.5",

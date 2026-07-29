@@ -1,10 +1,16 @@
 import { error } from "@sveltejs/kit";
 import type { PageServerLoad } from "./$types";
+import {
+  relatedReadAccess,
+  requirePagePermission,
+} from "$lib/server/auth/authorization";
 import { requireDb } from "$lib/server/db";
 import { getClaim } from "$lib/server/domain/claims";
 
 export const load: PageServerLoad = async ({ locals, params }) => {
-  if (process.env.DOMINO_DEMO_MODE !== "false") {
+  requirePagePermission(locals.actor, "claims:read");
+  const access = relatedReadAccess(locals.actor);
+  if (process.env.DOMINO_DEMO_MODE === "true") {
     return {
       claim: {
         id: params.id,
@@ -42,6 +48,7 @@ export const load: PageServerLoad = async ({ locals, params }) => {
     requireDb(),
     locals.actor!.householdId,
     params.id,
+    { documents: access.documents, notes: access.notes },
   );
   if (!claim) throw error(404, "Claim not found");
   return { claim };

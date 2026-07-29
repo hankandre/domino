@@ -19,6 +19,7 @@ import {
 import { demoProducts } from "$lib/demo";
 import { searchProducts } from "./search";
 import { permissions, type Permission, can } from "./auth/permissions";
+import { relatedReadAccess } from "./auth/authorization";
 import { suggestProductImage } from "./image-suggestions";
 import { authenticateSessionToken, readSessionCookie } from "./auth/oidc";
 import { requireDb } from "./db";
@@ -39,6 +40,7 @@ import {
   createProduct,
   getProductDetail,
   listProductSummaries,
+  projectProductRelatedData,
   setProductArchived,
   updateProduct,
 } from "./domain/products";
@@ -68,6 +70,12 @@ import {
   saveUploadedProductImage,
 } from "./domain/images";
 import { openApiDocument } from "./openapi";
+import {
+  readSwaggerAsset,
+  swaggerContentSecurityPolicy,
+  swaggerDocumentHtml,
+  swaggerInitializer,
+} from "./swagger";
 
 type Variables = {
   actor: {
@@ -254,7 +262,7 @@ async function authenticateApiCredential(
 
 app.use("/v1/*", async (c, next) => {
   const authorization = c.req.header("authorization");
-  const demoMode = process.env.DOMINO_DEMO_MODE !== "false";
+  const demoMode = process.env.DOMINO_DEMO_MODE === "true";
 
   if (demoMode && !authorization) {
     c.set("actor", {
@@ -339,11 +347,53 @@ function requirePermission(permission: Permission): MiddlewareHandler<Env> {
 
 const routes = app
   .get("/health", (c) =>
-    c.json({ ok: true, service: "domino", version: "0.1.0" }),
+    c.json({ ok: true, service: "domino", version: "0.1.1" }),
   )
   .get("/openapi.json", (c) => c.json(openApiDocument))
+  .get("/docs", (c) => {
+    c.header("Content-Security-Policy", swaggerContentSecurityPolicy);
+    c.header("Referrer-Policy", "no-referrer");
+    c.header("X-Content-Type-Options", "nosniff");
+    return c.html(swaggerDocumentHtml);
+  })
+  .get("/docs/swagger-initializer.js", (c) => {
+    c.header("Content-Type", "text/javascript; charset=utf-8");
+    c.header("Cache-Control", "public, max-age=86400");
+    c.header("X-Content-Type-Options", "nosniff");
+    return c.body(swaggerInitializer);
+  })
+  .get("/docs/swagger-ui.css", async (c) => {
+    return new Response(await readSwaggerAsset("swagger-ui.css"), {
+      headers: {
+        "Cache-Control": "public, max-age=31536000, immutable",
+        "Content-Type": "text/css; charset=utf-8",
+        "X-Content-Type-Options": "nosniff",
+      },
+    });
+  })
+  .get("/docs/swagger-ui-bundle.js", async (c) => {
+    return new Response(await readSwaggerAsset("swagger-ui-bundle.js"), {
+      headers: {
+        "Cache-Control": "public, max-age=31536000, immutable",
+        "Content-Type": "text/javascript; charset=utf-8",
+        "X-Content-Type-Options": "nosniff",
+      },
+    });
+  })
+  .get("/docs/swagger-ui-standalone-preset.js", async (c) => {
+    return new Response(
+      await readSwaggerAsset("swagger-ui-standalone-preset.js"),
+      {
+        headers: {
+          "Cache-Control": "public, max-age=31536000, immutable",
+          "Content-Type": "text/javascript; charset=utf-8",
+          "X-Content-Type-Options": "nosniff",
+        },
+      },
+    );
+  })
   .get("/ready", async (c) => {
-    if (process.env.DOMINO_DEMO_MODE !== "false") {
+    if (process.env.DOMINO_DEMO_MODE === "true") {
       return c.json({
         ok: true,
         database: "demo",
@@ -404,7 +454,7 @@ const routes = app
         .update(deviceCode)
         .digest("hex");
       const expiresAt = Date.now() + 10 * 60_000;
-      if (process.env.DOMINO_DEMO_MODE !== "false") {
+      if (process.env.DOMINO_DEMO_MODE === "true") {
         deviceCodes.set(deviceCodeHash, {
           userCode,
           requestedName: c.req.valid("json").name,
@@ -471,7 +521,7 @@ const routes = app
       }),
     ),
     async (c) => {
-      const demoMode = process.env.DOMINO_DEMO_MODE !== "false";
+      const demoMode = process.env.DOMINO_DEMO_MODE === "true";
       const requestOrigin = c.req.header("origin");
       const expectedOrigin = new URL(process.env.ORIGIN ?? c.req.url).origin;
       if (!demoMode && (!requestOrigin || requestOrigin !== expectedOrigin)) {
@@ -623,7 +673,7 @@ const routes = app
       const hash = createHash("sha256")
         .update(c.req.valid("json").deviceCode)
         .digest("hex");
-      if (process.env.DOMINO_DEMO_MODE === "false") {
+      if (process.env.DOMINO_DEMO_MODE !== "true") {
         const database = requireDb();
         const result = await database.transaction(async (tx) => {
           const [device] = await tx
@@ -690,7 +740,7 @@ const routes = app
       }),
     ),
     async (c) => {
-      if (process.env.DOMINO_DEMO_MODE !== "false") {
+      if (process.env.DOMINO_DEMO_MODE === "true") {
         return c.json({ events: [] });
       }
       const events = await requireDb()
@@ -719,7 +769,7 @@ const routes = app
     async (c) => {
       const { id } = c.req.valid("param");
       const approvingActor = c.get("actor");
-      if (process.env.DOMINO_DEMO_MODE !== "false") {
+      if (process.env.DOMINO_DEMO_MODE === "true") {
         return c.json({
           revoked: true,
           actorId: id,
@@ -774,13 +824,17 @@ const routes = app
     zValidator("query", searchQuery),
     async (c) => {
       const query = c.req.valid("query");
+      const access = relatedReadAccess(c.get("actor"));
       const source =
-        process.env.DOMINO_DEMO_MODE !== "false"
-          ? demoProducts
+        process.env.DOMINO_DEMO_MODE === "true"
+          ? demoProducts.map((product) =>
+              projectProductRelatedData(product, access),
+            )
           : await listProductSummaries(
               requireDb(),
               c.get("actor").householdId,
               query.includeArchived === "true",
+              access,
             );
       const products = searchProducts(source, {
         query: query.q,
@@ -800,10 +854,18 @@ const routes = app
     zValidator("param", idParamInput),
     async (c) => {
       const { id } = c.req.valid("param");
+      const access = relatedReadAccess(c.get("actor"));
       const product =
-        process.env.DOMINO_DEMO_MODE !== "false"
-          ? demoProducts.find((item) => item.id === id)
-          : await getProductDetail(requireDb(), c.get("actor").householdId, id);
+        process.env.DOMINO_DEMO_MODE === "true"
+          ? demoProducts
+              .map((item) => projectProductRelatedData(item, access))
+              .find((item) => item.id === id)
+          : await getProductDetail(
+              requireDb(),
+              c.get("actor").householdId,
+              id,
+              access,
+            );
       return product
         ? c.json({ product })
         : c.json({ error: "Product not found" }, 404);
@@ -815,7 +877,7 @@ const routes = app
     zValidator("json", productInput),
     async (c) => {
       const input = c.req.valid("json");
-      if (process.env.DOMINO_DEMO_MODE !== "false") {
+      if (process.env.DOMINO_DEMO_MODE === "true") {
         return c.json({ product: { id: crypto.randomUUID(), ...input } }, 201);
       }
       const product = await createProduct(
@@ -841,7 +903,7 @@ const routes = app
     zValidator("json", productInput.partial()),
     async (c) => {
       const { id } = c.req.valid("param");
-      if (process.env.DOMINO_DEMO_MODE !== "false") {
+      if (process.env.DOMINO_DEMO_MODE === "true") {
         return c.json({
           product: { id, ...c.req.valid("json") },
         });
@@ -864,7 +926,7 @@ const routes = app
     zValidator("param", idParamInput),
     async (c) => {
       const { id } = c.req.valid("param");
-      if (process.env.DOMINO_DEMO_MODE !== "false") {
+      if (process.env.DOMINO_DEMO_MODE === "true") {
         return c.json({ archived: true, productId: id });
       }
       const product = await setProductArchived(
@@ -885,7 +947,7 @@ const routes = app
     zValidator("param", idParamInput),
     async (c) => {
       const { id } = c.req.valid("param");
-      if (process.env.DOMINO_DEMO_MODE !== "false") {
+      if (process.env.DOMINO_DEMO_MODE === "true") {
         return c.json({ archived: false, productId: id });
       }
       const product = await setProductArchived(
@@ -907,7 +969,7 @@ const routes = app
     zValidator("json", warrantyInput),
     async (c) => {
       const { id } = c.req.valid("param");
-      if (process.env.DOMINO_DEMO_MODE !== "false") {
+      if (process.env.DOMINO_DEMO_MODE === "true") {
         return c.json(
           {
             warranty: {
@@ -962,7 +1024,7 @@ const routes = app
     zValidator("json", warrantyInput.partial()),
     async (c) => {
       const { id } = c.req.valid("param");
-      if (process.env.DOMINO_DEMO_MODE !== "false") {
+      if (process.env.DOMINO_DEMO_MODE === "true") {
         return c.json({
           warranty: { id, ...c.req.valid("json") },
         });
@@ -1011,7 +1073,7 @@ const routes = app
     zValidator("param", idParamInput),
     async (c) => {
       const { id } = c.req.valid("param");
-      if (process.env.DOMINO_DEMO_MODE !== "false")
+      if (process.env.DOMINO_DEMO_MODE === "true")
         return c.json({ deleted: true });
       const database = requireDb();
       const [existing] = await database
@@ -1071,7 +1133,7 @@ const routes = app
     zValidator("json", z.object({ imageUrl: z.url() })),
     async (c) => {
       const { id } = c.req.valid("param");
-      if (process.env.DOMINO_DEMO_MODE !== "false") {
+      if (process.env.DOMINO_DEMO_MODE === "true") {
         return c.json(
           {
             image: {
@@ -1111,7 +1173,7 @@ const routes = app
     zValidator("form", productImageUploadInput),
     async (c) => {
       const { id } = c.req.valid("param");
-      if (process.env.DOMINO_DEMO_MODE !== "false") {
+      if (process.env.DOMINO_DEMO_MODE === "true") {
         return c.json({ image: { id: crypto.randomUUID() } }, 201);
       }
       try {
@@ -1143,7 +1205,7 @@ const routes = app
     zValidator("param", idParamInput),
     async (c) => {
       const { id } = c.req.valid("param");
-      if (process.env.DOMINO_DEMO_MODE !== "false")
+      if (process.env.DOMINO_DEMO_MODE === "true")
         return c.json({ error: "Image not found." }, 404);
       const image = await openProductImage(
         requireDb(),
@@ -1170,7 +1232,7 @@ const routes = app
       }),
     ),
     async (c) => {
-      if (process.env.DOMINO_DEMO_MODE !== "false")
+      if (process.env.DOMINO_DEMO_MODE === "true")
         return c.json({ documents: [] });
       await purgeExpiredDocuments(requireDb());
       const documents = await listDocuments(
@@ -1186,7 +1248,7 @@ const routes = app
     requirePermission("documents:attach"),
     zValidator("form", documentUploadInput),
     async (c) => {
-      if (process.env.DOMINO_DEMO_MODE !== "false") {
+      if (process.env.DOMINO_DEMO_MODE === "true") {
         return c.json(
           { document: { id: crypto.randomUUID(), processingStatus: "ready" } },
           201,
@@ -1222,6 +1284,7 @@ const routes = app
   .post(
     "/v1/documents/link-paperless",
     requirePermission("documents:attach"),
+    requirePermission("paperless:discover"),
     zValidator(
       "json",
       z.object({
@@ -1232,6 +1295,12 @@ const routes = app
       }),
     ),
     async (c) => {
+      if (process.env.DOMINO_DEMO_MODE === "true") {
+        return c.json(
+          { error: "Paperless linking is unavailable in demo mode." },
+          403,
+        );
+      }
       try {
         const document = await linkPaperlessDocument(
           requireDb(),
@@ -1259,6 +1328,7 @@ const routes = app
   .get(
     "/v1/paperless/search",
     requirePermission("documents:read"),
+    requirePermission("paperless:discover"),
     zValidator(
       "query",
       z.object({
@@ -1267,6 +1337,9 @@ const routes = app
     ),
     async (c) => {
       const { q } = c.req.valid("query");
+      if (process.env.DOMINO_DEMO_MODE === "true") {
+        return c.json({ documents: [] });
+      }
       try {
         const client = await paperlessClientForHousehold(
           requireDb(),
@@ -1322,7 +1395,7 @@ const routes = app
     zValidator("param", idParamInput),
     async (c) => {
       const { id } = c.req.valid("param");
-      if (process.env.DOMINO_DEMO_MODE !== "false") {
+      if (process.env.DOMINO_DEMO_MODE === "true") {
         return c.json({ error: "Demo documents do not contain files." }, 404);
       }
       const result = await openLocalDocument(
@@ -1363,7 +1436,7 @@ const routes = app
     zValidator("param", idParamInput),
     async (c) => {
       const { id } = c.req.valid("param");
-      if (process.env.DOMINO_DEMO_MODE !== "false")
+      if (process.env.DOMINO_DEMO_MODE === "true")
         return c.json({ unlinked: true, trashed: false });
       const result = await trashDocument(
         requireDb(),
@@ -1382,7 +1455,7 @@ const routes = app
     zValidator("param", idParamInput),
     async (c) => {
       const { id } = c.req.valid("param");
-      if (process.env.DOMINO_DEMO_MODE !== "false") {
+      if (process.env.DOMINO_DEMO_MODE === "true") {
         return c.json({ document: { id, trashedAt: null } });
       }
       const document = await restoreDocument(
@@ -1403,7 +1476,7 @@ const routes = app
     zValidator("json", z.object({ body: z.string().min(1).max(10_000) })),
     async (c) => {
       const { id } = c.req.valid("param");
-      if (process.env.DOMINO_DEMO_MODE !== "false") {
+      if (process.env.DOMINO_DEMO_MODE === "true") {
         return c.json(
           {
             note: {
@@ -1421,6 +1494,7 @@ const routes = app
         database,
         c.get("actor").householdId,
         id,
+        { claims: false, documents: false, notes: false },
       );
       if (!product) return c.json({ error: "Product not found" }, 404);
       const note = await database.transaction(async (tx) => {
@@ -1452,12 +1526,12 @@ const routes = app
     requirePermission("notes:read"),
     zValidator("param", idParamInput),
     async (c) => {
-      if (process.env.DOMINO_DEMO_MODE !== "false")
-        return c.json({ notes: [] });
+      if (process.env.DOMINO_DEMO_MODE === "true") return c.json({ notes: [] });
       const product = await getProductDetail(
         requireDb(),
         c.get("actor").householdId,
         c.req.valid("param").id,
+        { claims: false, documents: false, notes: true },
       );
       return product
         ? c.json({ notes: product.notes })
@@ -1480,7 +1554,7 @@ const routes = app
     ),
     async (c) => {
       const { id } = c.req.valid("param");
-      if (process.env.DOMINO_DEMO_MODE !== "false") {
+      if (process.env.DOMINO_DEMO_MODE === "true") {
         return c.json(
           {
             claim: {
@@ -1508,7 +1582,7 @@ const routes = app
   )
   .get("/v1/claims", requirePermission("claims:read"), async (c) => {
     const claims =
-      process.env.DOMINO_DEMO_MODE !== "false"
+      process.env.DOMINO_DEMO_MODE === "true"
         ? demoProducts.flatMap((product) =>
             product.activeClaim
               ? [
@@ -1534,7 +1608,8 @@ const routes = app
     zValidator("param", idParamInput),
     async (c) => {
       const { id } = c.req.valid("param");
-      if (process.env.DOMINO_DEMO_MODE !== "false") {
+      const relatedAccess = relatedReadAccess(c.get("actor"));
+      if (process.env.DOMINO_DEMO_MODE === "true") {
         const claim = demoProducts
           .flatMap((product) =>
             product.activeClaim
@@ -1557,7 +1632,15 @@ const routes = app
           ? c.json({ claim })
           : c.json({ error: "Claim not found" }, 404);
       }
-      const claim = await getClaim(requireDb(), c.get("actor").householdId, id);
+      const claim = await getClaim(
+        requireDb(),
+        c.get("actor").householdId,
+        id,
+        {
+          documents: relatedAccess.documents,
+          notes: relatedAccess.notes,
+        },
+      );
       return claim
         ? c.json({ claim })
         : c.json({ error: "Claim not found" }, 404);
@@ -1568,12 +1651,12 @@ const routes = app
     requirePermission("notes:read"),
     zValidator("param", idParamInput),
     async (c) => {
-      if (process.env.DOMINO_DEMO_MODE !== "false")
-        return c.json({ notes: [] });
+      if (process.env.DOMINO_DEMO_MODE === "true") return c.json({ notes: [] });
       const claim = await getClaim(
         requireDb(),
         c.get("actor").householdId,
         c.req.valid("param").id,
+        { documents: false, notes: true },
       );
       return claim
         ? c.json({ notes: claim.notes })
@@ -1587,7 +1670,7 @@ const routes = app
     zValidator("json", z.object({ body: z.string().min(1).max(10_000) })),
     async (c) => {
       const { id } = c.req.valid("param");
-      if (process.env.DOMINO_DEMO_MODE !== "false") {
+      if (process.env.DOMINO_DEMO_MODE === "true") {
         return c.json(
           {
             note: {
@@ -1601,7 +1684,10 @@ const routes = app
         );
       }
       const database = requireDb();
-      const claim = await getClaim(database, c.get("actor").householdId, id);
+      const claim = await getClaim(database, c.get("actor").householdId, id, {
+        documents: false,
+        notes: false,
+      });
       if (!claim) return c.json({ error: "Claim not found" }, 404);
       const note = await database.transaction(async (tx) => {
         const [created] = await tx
@@ -1664,7 +1750,7 @@ const routes = app
       const { id } = c.req.valid("param");
       const input = c.req.valid("json");
       if (input.status === "resolved" && !input.resolution?.trim()) {
-        if (process.env.DOMINO_DEMO_MODE !== "false") {
+        if (process.env.DOMINO_DEMO_MODE === "true") {
           return c.json(
             { error: "A resolution is required before resolving a claim." },
             400,
@@ -1674,6 +1760,7 @@ const routes = app
           requireDb(),
           c.get("actor").householdId,
           id,
+          { documents: false, notes: false },
         );
         if (!existing) return c.json({ error: "Claim not found" }, 404);
         if (!existing.resolution?.trim()) {
@@ -1683,7 +1770,7 @@ const routes = app
           );
         }
       }
-      if (process.env.DOMINO_DEMO_MODE !== "false") {
+      if (process.env.DOMINO_DEMO_MODE === "true") {
         return c.json({
           claim: {
             id,

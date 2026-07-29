@@ -4,6 +4,7 @@ import {
   deploymentPaperlessConfiguration,
   encryptPaperlessToken,
   normalizePaperlessUrl,
+  paperlessCredentialRefForSave,
 } from "./paperless";
 import { PaperlessClient } from "../paperless";
 
@@ -17,15 +18,34 @@ describe("Paperless integration credentials", () => {
     const encrypted = encryptPaperlessToken(
       "paperless-api-token",
       "household-one",
+      "https://paperless.example.test",
       environment,
     );
 
     expect(encrypted).not.toContain("paperless-api-token");
-    expect(decryptPaperlessToken(encrypted, "household-one", environment)).toBe(
-      "paperless-api-token",
-    );
+    expect(
+      decryptPaperlessToken(
+        encrypted,
+        "household-one",
+        "https://paperless.example.test",
+        environment,
+      ),
+    ).toBe("paperless-api-token");
     expect(() =>
-      decryptPaperlessToken(encrypted, "household-two", environment),
+      decryptPaperlessToken(
+        encrypted,
+        "household-two",
+        "https://paperless.example.test",
+        environment,
+      ),
+    ).toThrow("could not be decrypted");
+    expect(() =>
+      decryptPaperlessToken(
+        encrypted,
+        "household-one",
+        "https://attacker.example.test",
+        environment,
+      ),
     ).toThrow("could not be decrypted");
   });
 
@@ -55,5 +75,55 @@ describe("Paperless integration credentials", () => {
       token: "deployment-token",
       source: "deployment",
     });
+  });
+
+  test("requires a fresh token when the saved URL changes", () => {
+    const credentialRef = encryptPaperlessToken(
+      "paperless-api-token",
+      "household-one",
+      "https://paperless.example.test",
+      environment,
+    );
+    expect(
+      paperlessCredentialRefForSave({
+        householdId: "household-one",
+        baseUrl: "https://paperless.example.test",
+        existingBaseUrl: "https://paperless.example.test",
+        existingCredentialRef: credentialRef,
+        source: environment,
+      }),
+    ).toBe(credentialRef);
+    expect(() =>
+      paperlessCredentialRefForSave({
+        householdId: "household-one",
+        baseUrl: "https://attacker.example.test",
+        existingBaseUrl: "https://paperless.example.test",
+        existingCredentialRef: credentialRef,
+        source: environment,
+      }),
+    ).toThrow("new Paperless API token");
+  });
+
+  test("keeps deployment credentials paired with the deployment URL", () => {
+    const source = {
+      PAPERLESS_URL: "https://paperless.example.test",
+      PAPERLESS_TOKEN: "deployment-token",
+    };
+    expect(
+      paperlessCredentialRefForSave({
+        householdId: "household-one",
+        baseUrl: "https://paperless.example.test",
+        existingCredentialRef: "deployment",
+        source,
+      }),
+    ).toBe("deployment");
+    expect(() =>
+      paperlessCredentialRefForSave({
+        householdId: "household-one",
+        baseUrl: "https://attacker.example.test",
+        existingCredentialRef: "deployment",
+        source,
+      }),
+    ).toThrow("Enter a Paperless API token");
   });
 });

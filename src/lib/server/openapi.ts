@@ -2,7 +2,7 @@ export const openApiDocument = {
   openapi: "3.1.0",
   info: {
     title: "Domino API",
-    version: "0.1.0",
+    version: "0.1.1",
     description:
       "Household warranty, document, note, and claim API used by the Domino web app and Rust CLI.",
   },

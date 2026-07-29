@@ -259,6 +259,8 @@
   }
 </script>
 
+<svelte:head><title>{data.product.name} · Domino</title></svelte:head>
+
 <div
   class="mx-auto w-full max-w-[1480px] px-4 py-6 sm:px-6 sm:py-8 lg:px-9 lg:py-9"
 >
@@ -705,7 +707,9 @@
       {/if}
 
       <section aria-labelledby="documents-heading">
-        <div class="mb-4 flex items-end justify-between gap-4">
+        <div
+          class="mb-4 flex flex-col items-start gap-4 sm:flex-row sm:items-end sm:justify-between"
+        >
           <div>
             <h2
               id="documents-heading"
@@ -717,7 +721,7 @@
               Manuals, receipts, warranty terms, and claim evidence.
             </p>
           </div>
-          <div class="flex items-center gap-2">
+          <div class="flex w-full flex-wrap items-center gap-2 sm:w-auto">
             <label class="sr-only" for="product-document-kind"
               >Document type</label
             >

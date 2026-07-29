@@ -14,18 +14,84 @@ import {
 import { requireDb } from "../db";
 import { createWebSession } from "./oidc";
 
-const attempts = new Map<string, { count: number; resetAt: number }>();
+const loginWindowMs = 15 * 60_000;
+const maxTrackedLoginKeys = 10_000;
+const perAddressAttempts = new Map<
+  string,
+  { count: number; resetAt: number }
+>();
+const perIdentityAttempts = new Map<
+  string,
+  { count: number; resetAt: number }
+>();
+let globalAttempts = { count: 0, resetAt: 0 };
+let activePasswordVerifications = 0;
+const passwordVerificationQueue: Array<() => void> = [];
 
-export function consumeLoginAttempt(key: string) {
-  const now = Date.now();
+function consumeAttempt(
+  attempts: Map<string, { count: number; resetAt: number }>,
+  key: string,
+  limit: number,
+  now: number,
+) {
   const record = attempts.get(key);
   if (!record || record.resetAt <= now) {
-    attempts.set(key, { count: 1, resetAt: now + 15 * 60_000 });
+    if (record) attempts.delete(key);
+    if (attempts.size >= maxTrackedLoginKeys) {
+      for (const [trackedKey, trackedRecord] of attempts) {
+        if (trackedRecord.resetAt <= now) attempts.delete(trackedKey);
+      }
+    }
+    while (attempts.size >= maxTrackedLoginKeys) {
+      const oldest = attempts.keys().next().value;
+      if (!oldest) break;
+      attempts.delete(oldest);
+    }
+    attempts.set(key, { count: 1, resetAt: now + loginWindowMs });
     return true;
   }
-  if (record.count >= 10) return false;
+  if (record.count >= limit) return false;
   record.count += 1;
   return true;
+}
+
+export function consumeLoginAttempt(address: string, email: string) {
+  const now = Date.now();
+  if (globalAttempts.resetAt <= now) {
+    globalAttempts = { count: 0, resetAt: now + 60_000 };
+  }
+  if (globalAttempts.count >= 240) return false;
+  globalAttempts.count += 1;
+
+  const normalizedAddress = address.slice(0, 128);
+  const normalizedEmail = email.trim().toLowerCase().slice(0, 254);
+  return (
+    consumeAttempt(perAddressAttempts, normalizedAddress, 30, now) &&
+    consumeAttempt(
+      perIdentityAttempts,
+      `${normalizedAddress}:${normalizedEmail}`,
+      10,
+      now,
+    )
+  );
+}
+
+async function withPasswordVerificationSlot<T>(
+  operation: () => Promise<T>,
+): Promise<T | null> {
+  if (activePasswordVerifications >= 4) {
+    if (passwordVerificationQueue.length >= 32) return null;
+    await new Promise<void>((resolve) =>
+      passwordVerificationQueue.push(resolve),
+    );
+  }
+  activePasswordVerifications += 1;
+  try {
+    return await operation();
+  } finally {
+    activePasswordVerifications -= 1;
+    passwordVerificationQueue.shift()?.();
+  }
 }
 
 export async function hashPassword(password: string) {
@@ -67,7 +133,9 @@ export async function loginWithPassword(
   const comparisonHash =
     account?.passwordHash ??
     "$argon2id$v=19$m=19456,t=2,p=1$bm90LXJlYWwtc2FsdC0xMjM0NTY$TVmHbcTWcOcU0xQ2+f1KFkMyDgGvOLR6B9F+W/TZS5o";
-  const valid = await verify(comparisonHash, password).catch(() => false);
+  const valid = await withPasswordVerificationSlot(() =>
+    verify(comparisonHash, password).catch(() => false),
+  );
   if (!account?.passwordHash || !valid) return null;
   return createWebSession(account.actorId, userAgent);
 }

@@ -13,7 +13,7 @@ const publicRoutes = [
 ];
 
 export const handle: Handle = async ({ event, resolve }) => {
-  const demoMode = process.env.DOMINO_DEMO_MODE !== "false";
+  const demoMode = process.env.DOMINO_DEMO_MODE === "true";
   if (demoMode) {
     event.locals.actor = {
       id: "demo-owner",

@@ -2,7 +2,7 @@
 
 Domino is a self-hosted household warranty tracker for products, coverage, manuals, receipts, notes, and claims. It can store documents itself or defer to Paperless-ngx as the authoritative document store. A typed Hono API and CLI make the same records available to humans and restricted agents.
 
-The `0.1.0` household MVP persists products, warranties, structured claim instructions, notes, claims and timelines, document references, images, people, roles, sessions, invitations, and service credentials in PostgreSQL. Compose defaults demo mode off and binds to loopback; the development environment can still use the explicit demo dataset.
+The `0.1.1` household MVP persists products, warranties, structured claim instructions, notes, claims and timelines, document references, images, people, roles, sessions, invitations, and service credentials in PostgreSQL. Compose defaults demo mode off and binds to loopback; the development environment can still use the explicit demo dataset.
 
 ## Stack
 
@@ -42,15 +42,15 @@ cp .env.example .env
 docker compose up --build
 ```
 
-Compose binds Domino to `127.0.0.1` by default, which is appropriate for local evaluation and a same-host reverse proxy. Set `DOMINO_BIND_ADDRESS` deliberately if the container must listen on another host interface. Demo mode is unauthenticated and must remain loopback-only; set `DOMINO_DEMO_MODE=false` before exposing Domino to a LAN or public proxy.
+Compose binds Domino to `127.0.0.1` by default, which is appropriate for local evaluation and a same-host reverse proxy. Set `DOMINO_BIND_ADDRESS` deliberately if the container must listen on another host interface. Demo mode is disabled unless `DOMINO_DEMO_MODE=true`; because it is unauthenticated, enable it only on loopback for deliberate evaluation.
 
 The Domino application and migration containers start directly as UID/GID `10001`. They never start as root, call `su`, or change identity. Migrations run in the separate `migrate` service before the app becomes eligible to start. The app root filesystem is read-only; only `/data/uploads` and `/tmp` are writable. The Docker build context excludes `.env`, `secrets/`, and application data.
 
 The browser application and Rust CLI are separate images:
 
 ```text
-ghcr.io/hankandre/domino:0.1.0
-ghcr.io/hankandre/domino-cli:0.1.0
+ghcr.io/hankandre/domino:0.1.1
+ghcr.io/hankandre/domino-cli:0.1.1
 ```
 
 `Dockerfile` contains only the web application and migration tooling. `Dockerfile.cli` contains only the `domino` CLI and credential broker. Both runtime images start directly as UID/GID `10001`.
@@ -83,7 +83,7 @@ Both workload manifests enforce `runAsNonRoot`, UID/GID `10001`, `allowPrivilege
 
 Household owners can enter the Paperless URL and API token under **Settings → Paperless-ngx connection**. Deployment-managed installations can instead set `PAPERLESS_URL` and provide the token through the `paperless_token` Docker/Kubernetes secret. A saved household connection takes precedence over deployment defaults.
 
-UI-entered tokens are encrypted with AES-256-GCM, bound to the household, and never returned to the browser. Domino uses `DOMINO_CREDENTIAL_ENCRYPTION_KEY_FILE` or `DOMINO_CREDENTIAL_ENCRYPTION_KEY` when supplied; otherwise it derives the credential key from the existing Domino session secret. Keep that key stable for as long as the saved integration is needed.
+UI-entered tokens are encrypted with AES-256-GCM, bound to both the household and normalized Paperless URL, and never returned to the browser. Changing the Paperless URL requires entering a new token; deployment-managed tokens can only be used with their deployment-managed URL. Domino uses `DOMINO_CREDENTIAL_ENCRYPTION_KEY_FILE` or `DOMINO_CREDENTIAL_ENCRYPTION_KEY` when supplied; otherwise it derives the credential key from the existing Domino session secret. Keep that key stable for as long as the saved integration is needed.
 
 When Paperless is the selected backend:
 
@@ -91,7 +91,7 @@ When Paperless is the selected backend:
 - Domino stores its Paperless document ID, URL, kind, hash, and product/claim association;
 - Domino does not keep a second local copy.
 
-Paperless uploads are tracked as asynchronous tasks. A failed or unavailable authoritative Paperless backend returns a clear error and does not silently fall back to local storage. Existing Paperless documents can be searched and linked; deleting their Domino entry only unlinks it and never deletes the Paperless original.
+Paperless uploads are tracked as asynchronous tasks. A failed or unavailable authoritative Paperless backend returns a clear error and does not silently fall back to local storage. Existing Paperless documents can be searched and linked only by accounts granted the separate `paperless:discover` permission; built-in agent roles do not receive it. Deleting a Domino entry only unlinks it and never deletes the Paperless original.
 
 Disconnecting Paperless in Settings deletes Domino’s encrypted token, switches new attachments back to local storage, and does not delete anything from Paperless.
 
@@ -140,7 +140,7 @@ cargo install --git https://github.com/hankandre/domino domino-cli
 Tagged GitHub releases publish static Linux x86_64 and ARM64 archives with SHA-256 checksum files. The same release publishes a multi-architecture CLI image independently from the browser application:
 
 ```sh
-docker run --rm ghcr.io/hankandre/domino-cli:0.1.0 --version
+docker run --rm ghcr.io/hankandre/domino-cli:0.1.1 --version
 ```
 
 For a persistent human-operated CLI using Compose:
@@ -220,7 +220,8 @@ The device-approval screen lets the approving person choose each service permiss
 
 - `GET /api/health` is the process liveness check.
 - `GET /api/ready` verifies PostgreSQL and writable local storage. Paperless is reported but intentionally does not make the whole app unready.
-- `GET /api/openapi.json` publishes the external API overview. Browser calls use the Hono contract directly; the Rust CLI uses the stable `/api/v1` HTTP surface.
+- `GET /api/docs` serves a self-hosted Swagger UI with no CDN dependency.
+- `GET /api/openapi.json` publishes the Swagger UI's OpenAPI 3.1 document. Browser calls use the Hono contract directly; the Rust CLI uses the stable `/api/v1` HTTP surface.
 
 ## Scope
 

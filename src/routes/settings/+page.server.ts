@@ -5,6 +5,10 @@ import type { Actions, PageServerLoad } from "./$types";
 import { requireDb } from "$lib/server/db";
 import { auditEvents, households, integrations } from "$lib/server/db/schema";
 import {
+  hasPermission,
+  requireAnyPagePermission,
+} from "$lib/server/auth/authorization";
+import {
   disconnectPaperless,
   paperlessClientForHousehold,
   paperlessIntegrationStatus,
@@ -20,17 +24,12 @@ const paperlessInput = z.object({
     .transform((value) => value?.trim() || undefined),
 });
 
-function hasPermission(
-  actor: App.Locals["actor"],
-  permission: "household:manage" | "integrations:manage",
-) {
-  return Boolean(
-    actor?.permissions.includes("*") || actor?.permissions.includes(permission),
-  );
-}
-
 export const load: PageServerLoad = async ({ locals }) => {
-  if (process.env.DOMINO_DEMO_MODE !== "false") {
+  requireAnyPagePermission(locals.actor, [
+    "household:manage",
+    "integrations:manage",
+  ]);
+  if (process.env.DOMINO_DEMO_MODE === "true") {
     return {
       settings: { defaultDocumentBackend: "paperless", expiryWindowDays: 60 },
       paperless: {
@@ -44,23 +43,40 @@ export const load: PageServerLoad = async ({ locals }) => {
       canManagePaperless: true,
     };
   }
+  const canManageHousehold = hasPermission(locals.actor, "household:manage");
+  const canManagePaperless = hasPermission(locals.actor, "integrations:manage");
   const database = requireDb();
   const [household, paperless] = await Promise.all([
-    database
-      .select({
-        defaultDocumentBackend: households.defaultDocumentBackend,
-        expiryWindowDays: households.expiryWindowDays,
-      })
-      .from(households)
-      .where(eq(households.id, locals.actor!.householdId))
-      .limit(1),
-    paperlessIntegrationStatus(database, locals.actor!.householdId),
+    canManageHousehold
+      ? database
+          .select({
+            defaultDocumentBackend: households.defaultDocumentBackend,
+            expiryWindowDays: households.expiryWindowDays,
+          })
+          .from(households)
+          .where(eq(households.id, locals.actor!.householdId))
+          .limit(1)
+      : Promise.resolve([
+          {
+            defaultDocumentBackend: "local" as const,
+            expiryWindowDays: 60,
+          },
+        ]),
+    canManagePaperless
+      ? paperlessIntegrationStatus(database, locals.actor!.householdId)
+      : Promise.resolve({
+          enabled: false,
+          configured: false,
+          baseUrl: "",
+          source: null,
+          configurationError: null,
+        }),
   ]);
   return {
     settings: household[0],
     paperless,
-    canManageHousehold: hasPermission(locals.actor, "household:manage"),
-    canManagePaperless: hasPermission(locals.actor, "integrations:manage"),
+    canManageHousehold,
+    canManagePaperless,
   };
 };
 
@@ -133,7 +149,7 @@ export const actions: Actions = {
         paperlessUrl: String(form.get("paperlessUrl") ?? ""),
       });
     }
-    if (process.env.DOMINO_DEMO_MODE !== "false") {
+    if (process.env.DOMINO_DEMO_MODE === "true") {
       return { paperlessSaved: true };
     }
     try {
@@ -175,7 +191,7 @@ export const actions: Actions = {
       return fail(403, { paperlessError: "Not authorized." });
     }
     try {
-      if (process.env.DOMINO_DEMO_MODE !== "false")
+      if (process.env.DOMINO_DEMO_MODE === "true")
         return { paperlessHealthy: true };
       const client = await paperlessClientForHousehold(
         requireDb(),
@@ -218,7 +234,7 @@ export const actions: Actions = {
     if (!hasPermission(locals.actor, "integrations:manage")) {
       return fail(403, { paperlessError: "Not authorized." });
     }
-    if (process.env.DOMINO_DEMO_MODE !== "false")
+    if (process.env.DOMINO_DEMO_MODE === "true")
       return { paperlessDisconnected: true };
     await requireDb().transaction(async (tx) => {
       const disconnected = await disconnectPaperless(

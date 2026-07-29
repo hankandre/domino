@@ -97,6 +97,8 @@
   }
 </script>
 
+<svelte:head><title>Documents · Domino</title></svelte:head>
+
 <div
   class="mx-auto w-full max-w-[1180px] px-4 py-6 sm:px-6 sm:py-8 lg:px-9 lg:py-9"
 >
@@ -151,7 +153,11 @@
         >Link an existing Paperless-ngx document</summary
       >
       <div class="mt-4 flex gap-2">
+        <label for="paperless-search" class="sr-only"
+          >Search Paperless documents</label
+        >
         <input
+          id="paperless-search"
           bind:value={paperlessQuery}
           placeholder="Search Paperless documents"
           class="min-h-11 min-w-0 flex-1 border border-rule px-3 text-sm"

@@ -5,7 +5,7 @@ export const load: LayoutServerLoad = ({ locals }) => {
   const oidc = getOidcConfig();
   return {
     actor: locals.actor ?? null,
-    demoMode: process.env.DOMINO_DEMO_MODE !== "false",
+    demoMode: process.env.DOMINO_DEMO_MODE === "true",
     documentStore:
       process.env.PAPERLESS_URL &&
       (process.env.PAPERLESS_TOKEN_FILE || process.env.PAPERLESS_TOKEN)

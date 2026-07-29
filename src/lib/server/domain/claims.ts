@@ -4,6 +4,23 @@ import * as schema from "../db/schema";
 
 type Database = NodePgDatabase<typeof schema>;
 
+export type ClaimRelatedReadAccess = {
+  documents: boolean;
+  notes: boolean;
+};
+
+export function projectClaimRelatedData<
+  T extends { documents?: unknown[]; notes?: unknown[] },
+>(claim: T, access: ClaimRelatedReadAccess): T {
+  return {
+    ...claim,
+    ...("documents" in claim
+      ? { documents: access.documents ? claim.documents : [] }
+      : {}),
+    ...("notes" in claim ? { notes: access.notes ? claim.notes : [] } : {}),
+  } as T;
+}
+
 export async function listClaims(db: Database, householdId: string) {
   const rows = await db
     .select({
@@ -35,6 +52,7 @@ export async function getClaim(
   db: Database,
   householdId: string,
   claimId: string,
+  access: ClaimRelatedReadAccess,
 ) {
   const [row] = await db
     .select({
@@ -69,33 +87,40 @@ export async function getClaim(
       .leftJoin(schema.actors, eq(schema.claimEvents.actorId, schema.actors.id))
       .where(eq(schema.claimEvents.claimId, claimId))
       .orderBy(schema.claimEvents.occurredAt),
-    db
-      .select({
-        id: schema.notes.id,
-        body: schema.notes.body,
-        createdAt: schema.notes.createdAt,
-        updatedAt: schema.notes.updatedAt,
-        authorName: schema.actors.name,
-      })
-      .from(schema.notes)
-      .leftJoin(schema.actors, eq(schema.notes.authorActorId, schema.actors.id))
-      .where(
-        and(
-          eq(schema.notes.claimId, claimId),
-          eq(schema.notes.householdId, householdId),
-        ),
-      )
-      .orderBy(desc(schema.notes.createdAt)),
-    db
-      .select()
-      .from(schema.documents)
-      .where(
-        and(
-          eq(schema.documents.claimId, claimId),
-          eq(schema.documents.householdId, householdId),
-          isNull(schema.documents.trashedAt),
-        ),
-      ),
+    access.notes
+      ? db
+          .select({
+            id: schema.notes.id,
+            body: schema.notes.body,
+            createdAt: schema.notes.createdAt,
+            updatedAt: schema.notes.updatedAt,
+            authorName: schema.actors.name,
+          })
+          .from(schema.notes)
+          .leftJoin(
+            schema.actors,
+            eq(schema.notes.authorActorId, schema.actors.id),
+          )
+          .where(
+            and(
+              eq(schema.notes.claimId, claimId),
+              eq(schema.notes.householdId, householdId),
+            ),
+          )
+          .orderBy(desc(schema.notes.createdAt))
+      : Promise.resolve([]),
+    access.documents
+      ? db
+          .select()
+          .from(schema.documents)
+          .where(
+            and(
+              eq(schema.documents.claimId, claimId),
+              eq(schema.documents.householdId, householdId),
+              isNull(schema.documents.trashedAt),
+            ),
+          )
+      : Promise.resolve([]),
     db
       .select()
       .from(schema.warranties)

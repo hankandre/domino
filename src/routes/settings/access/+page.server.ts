@@ -2,6 +2,7 @@ import { fail } from "@sveltejs/kit";
 import type { Actions, PageServerLoad } from "./$types";
 import { and, eq } from "drizzle-orm";
 import { createInvitation, createPasswordReset } from "$lib/server/auth/local";
+import { requirePagePermission } from "$lib/server/auth/authorization";
 import { requireDb } from "$lib/server/db";
 import {
   actorRoles,
@@ -20,7 +21,8 @@ function requireManager(actor: App.Locals["actor"]) {
 }
 
 export const load: PageServerLoad = async ({ locals }) => {
-  if (process.env.DOMINO_DEMO_MODE !== "false") {
+  requirePagePermission(locals.actor, "household:manage");
+  if (process.env.DOMINO_DEMO_MODE === "true") {
     return {
       accounts: [
         {
@@ -50,7 +52,7 @@ export const load: PageServerLoad = async ({ locals }) => {
       canManage: true,
     };
   }
-  if (!locals.actor) return { accounts: [], roles: [], canManage: false };
+  const actor = locals.actor!;
   const database = requireDb();
   const [accounts, householdRoles] = await Promise.all([
     database
@@ -69,7 +71,7 @@ export const load: PageServerLoad = async ({ locals }) => {
       .leftJoin(users, eq(actors.userId, users.id))
       .leftJoin(actorRoles, eq(actorRoles.actorId, actors.id))
       .leftJoin(roles, eq(actorRoles.roleId, roles.id))
-      .where(eq(actors.householdId, locals.actor.householdId)),
+      .where(eq(actors.householdId, actor.householdId)),
     database
       .select({
         id: roles.id,
@@ -77,7 +79,7 @@ export const load: PageServerLoad = async ({ locals }) => {
         description: roles.description,
       })
       .from(roles)
-      .where(eq(roles.householdId, locals.actor.householdId)),
+      .where(eq(roles.householdId, actor.householdId)),
   ]);
   return {
     accounts,

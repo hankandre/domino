@@ -13,7 +13,8 @@ import { PaperlessClient } from "../paperless";
 type Database = NodePgDatabase<typeof schema>;
 type Environment = Record<string, string | undefined>;
 
-const encryptedCredentialPrefix = "encrypted:v1:";
+const legacyEncryptedCredentialPrefix = "encrypted:v1:";
+const encryptedCredentialPrefix = "encrypted:v2:";
 
 function readSecret(path: string | undefined, value: string | undefined) {
   if (path) {
@@ -67,11 +68,15 @@ export function normalizePaperlessUrl(value: string) {
 export function encryptPaperlessToken(
   token: string,
   householdId: string,
+  baseUrl: string,
   source: Environment = process.env,
 ) {
+  const normalizedBaseUrl = normalizePaperlessUrl(baseUrl);
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", credentialKey(source), iv);
-  cipher.setAAD(Buffer.from(`${householdId}:paperless:v1`));
+  cipher.setAAD(
+    Buffer.from(`${householdId}:paperless:v2:${normalizedBaseUrl}`),
+  );
   const ciphertext = Buffer.concat([
     cipher.update(token, "utf8"),
     cipher.final(),
@@ -83,12 +88,18 @@ export function encryptPaperlessToken(
 export function decryptPaperlessToken(
   encrypted: string,
   householdId: string,
+  baseUrl: string,
   source: Environment = process.env,
 ) {
-  if (!encrypted.startsWith(encryptedCredentialPrefix)) {
+  const isCurrent = encrypted.startsWith(encryptedCredentialPrefix);
+  const isLegacy = encrypted.startsWith(legacyEncryptedCredentialPrefix);
+  if (!isCurrent && !isLegacy) {
     throw new Error("Paperless credential has an unsupported storage format.");
   }
-  const parts = encrypted.slice(encryptedCredentialPrefix.length).split(".");
+  const prefix = isCurrent
+    ? encryptedCredentialPrefix
+    : legacyEncryptedCredentialPrefix;
+  const parts = encrypted.slice(prefix.length).split(".");
   if (parts.length !== 3) {
     throw new Error("Paperless credential is malformed.");
   }
@@ -97,7 +108,13 @@ export function decryptPaperlessToken(
       Buffer.from(part, "base64url"),
     );
     const decipher = createDecipheriv("aes-256-gcm", credentialKey(source), iv);
-    decipher.setAAD(Buffer.from(`${householdId}:paperless:v1`));
+    decipher.setAAD(
+      Buffer.from(
+        isCurrent
+          ? `${householdId}:paperless:v2:${normalizePaperlessUrl(baseUrl)}`
+          : `${householdId}:paperless:v1`,
+      ),
+    );
     decipher.setAuthTag(tag);
     return Buffer.concat([
       decipher.update(ciphertext),
@@ -108,6 +125,13 @@ export function decryptPaperlessToken(
       "Paperless credential could not be decrypted. Check the credential-encryption secret.",
     );
   }
+}
+
+function isEncryptedCredential(value: string | null | undefined) {
+  return Boolean(
+    value?.startsWith(encryptedCredentialPrefix) ||
+    value?.startsWith(legacyEncryptedCredentialPrefix),
+  );
 }
 
 export function deploymentPaperlessConfiguration(
@@ -145,30 +169,29 @@ export async function paperlessConfigurationForHousehold(
   if (!record) return deploymentPaperlessConfiguration();
   if (!record.enabled) return null;
 
-  if (
-    record.baseUrl &&
-    record.credentialRef?.startsWith(encryptedCredentialPrefix)
-  ) {
+  if (record.baseUrl && isEncryptedCredential(record.credentialRef)) {
+    const baseUrl = normalizePaperlessUrl(record.baseUrl);
     return {
-      baseUrl: normalizePaperlessUrl(record.baseUrl),
-      token: decryptPaperlessToken(record.credentialRef, householdId),
+      baseUrl,
+      token: decryptPaperlessToken(record.credentialRef!, householdId, baseUrl),
       source: "database" as const,
     };
   }
+  if (record.credentialRef !== "deployment") return null;
   const deployment = deploymentPaperlessConfiguration();
+  if (!deployment) return null;
   const baseUrl = record.baseUrl
     ? normalizePaperlessUrl(record.baseUrl)
-    : deployment?.baseUrl;
-  const token = record.credentialRef?.startsWith(encryptedCredentialPrefix)
-    ? decryptPaperlessToken(record.credentialRef, householdId)
-    : deployment?.token;
-  if (!baseUrl || !token) return null;
+    : deployment.baseUrl;
+  if (baseUrl !== deployment.baseUrl) {
+    throw new Error(
+      "The deployment Paperless token can only be used with the deployment Paperless URL.",
+    );
+  }
   return {
     baseUrl,
-    token,
-    source: record.credentialRef?.startsWith(encryptedCredentialPrefix)
-      ? ("database" as const)
-      : ("deployment" as const),
+    token: deployment.token,
+    source: "deployment" as const,
   };
 }
 
@@ -236,19 +259,13 @@ export async function savePaperlessConfiguration(
 ) {
   const baseUrl = normalizePaperlessUrl(input.baseUrl);
   const existing = await integrationRecord(db, householdId);
-  let credentialRef = existing?.credentialRef ?? null;
-  if (input.token) {
-    credentialRef = encryptPaperlessToken(input.token, householdId);
-  } else {
-    const deployment = deploymentPaperlessConfiguration();
-    if (credentialRef === "deployment" && !deployment) credentialRef = null;
-    if (!credentialRef && deployment) credentialRef = "deployment";
-  }
-  if (!credentialRef) {
-    throw new Error(
-      "Enter a Paperless API token. Domino never returns a saved token to the browser.",
-    );
-  }
+  const credentialRef = paperlessCredentialRefForSave({
+    householdId,
+    baseUrl,
+    token: input.token,
+    existingBaseUrl: existing?.baseUrl,
+    existingCredentialRef: existing?.credentialRef,
+  });
 
   const [saved] = await db
     .insert(schema.integrations)
@@ -272,6 +289,50 @@ export async function savePaperlessConfiguration(
     })
     .returning();
   return saved;
+}
+
+export function paperlessCredentialRefForSave(input: {
+  householdId: string;
+  baseUrl: string;
+  token?: string;
+  existingBaseUrl?: string | null;
+  existingCredentialRef?: string | null;
+  source?: Environment;
+}) {
+  const baseUrl = normalizePaperlessUrl(input.baseUrl);
+  if (input.token) {
+    return encryptPaperlessToken(
+      input.token,
+      input.householdId,
+      baseUrl,
+      input.source,
+    );
+  }
+
+  const existingBaseUrl = input.existingBaseUrl
+    ? normalizePaperlessUrl(input.existingBaseUrl)
+    : null;
+  if (isEncryptedCredential(input.existingCredentialRef)) {
+    if (existingBaseUrl !== baseUrl) {
+      throw new Error(
+        "Enter a new Paperless API token when changing the Paperless URL.",
+      );
+    }
+    return input.existingCredentialRef!;
+  }
+
+  const deployment = deploymentPaperlessConfiguration(input.source);
+  if (
+    (input.existingCredentialRef === "deployment" ||
+      !input.existingCredentialRef) &&
+    deployment?.baseUrl === baseUrl
+  ) {
+    return "deployment";
+  }
+
+  throw new Error(
+    "Enter a Paperless API token. Domino never returns a saved token to the browser.",
+  );
 }
 
 export async function disconnectPaperless(db: Database, householdId: string) {

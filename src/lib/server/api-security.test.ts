@@ -4,6 +4,31 @@ import { app } from "./api";
 const originalDemoMode = process.env.DOMINO_DEMO_MODE;
 const originalOrigin = process.env.ORIGIN;
 
+async function issueDemoCredential(permissions: string[]) {
+  const started = await app.request("/api/device/start", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: `Restricted ${crypto.randomUUID()}` }),
+  });
+  const device = (await started.json()) as {
+    deviceCode: string;
+    userCode: string;
+  };
+  const approved = await app.request("/api/device/approve", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ userCode: device.userCode, permissions }),
+  });
+  expect(approved.status).toBe(200);
+  const issued = await app.request("/api/device/token", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ deviceCode: device.deviceCode }),
+  });
+  const credential = (await issued.json()) as { accessToken: string };
+  return credential.accessToken;
+}
+
 afterEach(() => {
   process.env.DOMINO_DEMO_MODE = originalDemoMode;
   process.env.ORIGIN = originalOrigin;
@@ -21,6 +46,13 @@ describe("API browser boundaries", () => {
     expect(response.headers.get("access-control-allow-credentials")).toBeNull();
   });
 
+  test("does not enable unauthenticated demo access when unset", async () => {
+    delete process.env.DOMINO_DEMO_MODE;
+    const response = await app.request("/api/v1/me");
+
+    expect(response.status).toBe(401);
+  });
+
   test("rejects wildcard service-account grants", async () => {
     process.env.DOMINO_DEMO_MODE = "true";
     const response = await app.request("/api/device/approve", {
@@ -30,6 +62,32 @@ describe("API browser boundaries", () => {
     });
 
     expect(response.status).toBe(400);
+  });
+
+  test("redacts claim, document, and note data from warranty-only product responses", async () => {
+    process.env.DOMINO_DEMO_MODE = "true";
+    const token = await issueDemoCredential(["warranties:read"]);
+    const response = await app.request("/api/v1/products", {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const body = (await response.json()) as {
+      products: Array<{
+        activeClaim?: unknown;
+        documents: number;
+        notes: number;
+      }>;
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.products.length).toBeGreaterThan(0);
+    expect(
+      body.products.every(
+        (product) =>
+          product.activeClaim === undefined &&
+          product.documents === 0 &&
+          product.notes === 0,
+      ),
+    ).toBe(true);
   });
 
   test("builds the verification URL from the trusted public origin", async () => {

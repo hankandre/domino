@@ -174,6 +174,8 @@
   }
 </script>
 
+<svelte:head><title>Add a product · Domino</title></svelte:head>
+
 <div
   class="mx-auto w-full max-w-[1120px] px-4 py-6 sm:px-6 sm:py-8 lg:px-9 lg:py-9"
 >

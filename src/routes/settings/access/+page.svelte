@@ -4,6 +4,7 @@
   let { data, form } = $props();
   let showInvite = $state(false);
   let copied = $state(false);
+  let resetCopied = $state(false);
   const permissionOptions = [
     ["warranties:read", "Read warranties"],
     ["warranties:write", "Manage products"],
@@ -12,6 +13,7 @@
     ["claims:manage", "Manage claims"],
     ["documents:read", "Read documents"],
     ["documents:attach", "Attach documents"],
+    ["paperless:discover", "Search and link Paperless documents"],
     ["notes:read", "Read notes"],
     ["notes:write", "Add notes"],
   ];
@@ -71,12 +73,14 @@
   {/if}
   {#if form?.permissionsSaved}<div
       class="mt-6 border border-green/30 bg-green-soft p-4 text-sm text-green"
+      role="status"
     >
       Service-account permissions saved.
     </div>{/if}
   {#if form?.resetUrl}
     <div
       class="mt-6 border border-green/30 bg-green-soft p-4 text-sm text-green"
+      role="status"
     >
       <strong>Password-reset link created.</strong>
       <div class="mt-3 flex gap-2">
@@ -86,9 +90,12 @@
           class="min-h-11 min-w-0 flex-1 border border-green/30 bg-sheet px-3 text-xs text-ink"
         /><button
           type="button"
-          onclick={() => navigator.clipboard.writeText(form.resetUrl)}
+          onclick={async () => {
+            await navigator.clipboard.writeText(form.resetUrl);
+            resetCopied = true;
+          }}
           class="min-h-11 bg-green px-4 text-xs font-bold text-white"
-          >Copy</button
+          >{resetCopied ? "Copied" : "Copy"}</button
         >
       </div>
     </div>
@@ -139,7 +146,7 @@
     <div class="mt-4 border-t border-ink">
       {#each data.accounts as account}
         <div
-          class="grid grid-cols-[auto_1fr_auto] items-center gap-4 border-b border-rule py-4"
+          class="grid grid-cols-[auto_1fr] items-center gap-4 border-b border-rule py-4 sm:grid-cols-[auto_1fr_auto]"
         >
           <span
             class={`grid size-11 place-items-center text-white ${account.kind === "service" ? "bg-orange" : "bg-ink"}`}
@@ -156,13 +163,14 @@
             </div>
           </div>
           {#if data.canManage}
-            <div class="flex gap-2">
+            <div class="col-span-2 flex flex-wrap gap-2 sm:col-span-1">
               {#if account.kind === "user"}<form method="POST" action="?/reset">
                   <input
                     type="hidden"
                     name="actorId"
                     value={account.id}
                   /><button
+                    aria-label={`Reset ${account.name}'s password`}
                     class="min-h-9 border border-rule px-3 text-xs font-bold"
                     >Reset password</button
                   >
@@ -175,8 +183,9 @@
                   value={account.disabled ? "false" : "true"}
                 />
                 <button
+                  aria-label={`${account.disabled ? "Enable" : "Disable"} ${account.name}`}
                   class={`min-h-9 border px-3 text-xs font-bold ${account.disabled ? "border-rule text-muted" : "border-green/30 text-green"}`}
-                  >{account.disabled ? "Enable" : "Active"}</button
+                  >{account.disabled ? "Enable" : "Disable"}</button
                 >
               </form>
             </div>

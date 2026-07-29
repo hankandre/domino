@@ -14,6 +14,7 @@
     ["claims:manage", "Manage claim status"],
     ["documents:read", "Read documents"],
     ["documents:attach", "Attach documents"],
+    ["paperless:discover", "Search and link Paperless documents"],
     ["notes:read", "Read notes"],
     ["notes:write", "Add notes"],
   ];
@@ -43,6 +44,8 @@
     }
   }
 </script>
+
+<svelte:head><title>Connect an agent · Domino</title></svelte:head>
 
 <div class="grid min-h-screen place-items-center px-4 py-10">
   <main

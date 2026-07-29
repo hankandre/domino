@@ -12,8 +12,8 @@ jobs:
   app:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.3.14
       - run: bun install --frozen-lockfile
@@ -24,9 +24,9 @@ jobs:
   rust:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
@@ -51,8 +51,8 @@ jobs:
       DATABASE_URL: postgres://domino:ci-database-password@127.0.0.1:5432/domino
       DOMINO_DEMO_MODE: "false"
     steps:
-      - uses: actions/checkout@v5
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.3.14
       - run: bun install --frozen-lockfile
@@ -72,7 +72,7 @@ jobs:
   container:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Validate Compose model
         run: |
           secret_file="$(mktemp)"
@@ -91,4 +91,4 @@ jobs:
       - name: Verify standalone CLI image
         run: |
           test "$(docker image inspect domino-cli:ci --format '{{.Config.User}}')" = "10001:10001"
-          test "$(docker run --rm domino-cli:ci --version)" = "domino 0.1.0"
+          test "$(docker run --rm domino-cli:ci --version)" = "domino 0.1.1"

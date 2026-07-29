@@ -70,6 +70,8 @@
   };
 </script>
 
+<svelte:head><title>Inventory · Domino</title></svelte:head>
+
 {@html "<!-- THESIS: Household coverage is a living dispatch manifest, refusing the generic metric-card dashboard. OWN-WORLD: paper-white sheets, blue-black ink, safety-orange exceptions, thin dividing rules, square controls, and marketplace-like product imagery. STORY: scan the household, see what needs attention, find any record, then move directly into coverage or claim action. FIRST VIEWPORT: a compact command header and universal search lead; two attention links follow; a product-card ledger fills the working surface; Add product sits upper-right. FORM: card-led dispatch ledger, sixth grounded direction, simplified composition C with richer detail from B; seed edd03ff5. -->"}
 
 <div
@@ -266,7 +268,12 @@
         >
           Household inventory
         </h2>
-        <p class="mt-1 text-sm text-muted">
+        <p
+          class="mt-1 text-sm text-muted"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        >
           {filteredProducts.length}
           {filteredProducts.length === 1 ? "record" : "records"}
           {query ? ` matching “${query}”` : ""}
@@ -300,7 +307,7 @@
     </div>
 
     {#if filteredProducts.length}
-      <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3" aria-live="polite">
+      <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {#each filteredProducts as product (product.id)}
           <ProductCard {product} />
         {/each}
