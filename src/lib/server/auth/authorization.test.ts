@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   canAdministerPermissions,
+  canAdministerUserIdentity,
   hasPermission,
   requireAnyPagePermission,
   requirePagePermission,
@@ -30,6 +31,40 @@ describe("page authorization", () => {
       ),
     ).toBe(false);
     expect(canAdministerPermissions(["*"], ["claims:write"])).toBe(true);
+  });
+
+  test("does not reset a user identity shared with another household", () => {
+    expect(
+      canAdministerUserIdentity(
+        ["household:manage", "claims:read"],
+        "household-one",
+        [
+          {
+            householdId: "household-one",
+            permissions: ["claims:read"],
+          },
+          {
+            householdId: "household-two",
+            permissions: ["claims:read"],
+          },
+        ],
+      ),
+    ).toBe(false);
+  });
+
+  test("does not reset an identity with permissions above the manager", () => {
+    expect(
+      canAdministerUserIdentity(
+        ["household:manage", "claims:read"],
+        "household-one",
+        [
+          {
+            householdId: "household-one",
+            permissions: ["claims:manage"],
+          },
+        ],
+      ),
+    ).toBe(false);
   });
 
   test("accepts an explicit permission or wildcard", () => {

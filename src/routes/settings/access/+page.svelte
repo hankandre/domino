@@ -5,18 +5,20 @@
   let showInvite = $state(false);
   let copied = $state(false);
   let resetCopied = $state(false);
-  const permissionOptions = [
-    ["warranties:read", "Read warranties"],
-    ["warranties:write", "Manage products"],
-    ["claims:read", "Read claims"],
-    ["claims:create", "Create claims"],
-    ["claims:manage", "Manage claims"],
-    ["documents:read", "Read documents"],
-    ["documents:attach", "Attach documents"],
-    ["paperless:discover", "Search and link Paperless documents"],
-    ["notes:read", "Read notes"],
-    ["notes:write", "Add notes"],
-  ];
+  const permissionOptions = (
+    [
+      ["warranties:read", "Read warranties"],
+      ["warranties:write", "Manage products"],
+      ["claims:read", "Read claims"],
+      ["claims:create", "Create claims"],
+      ["claims:manage", "Manage claims"],
+      ["documents:read", "Read documents"],
+      ["documents:attach", "Attach documents"],
+      ["paperless:discover", "Search and link Paperless documents"],
+      ["notes:read", "Read notes"],
+      ["notes:write", "Add notes"],
+    ] as const
+  ).filter(([permission]) => data.grantablePermissions.includes(permission));
 </script>
 
 <svelte:head><title>People & agents · Domino</title></svelte:head>
@@ -29,12 +31,16 @@
     title="People & agents"
     description="Give each person or service account only the authority it needs."
   >
-    {#if data.canManage}
+    {#if data.canManage && data.roles.length > 0}
       <button
         onclick={() => (showInvite = !showInvite)}
         class="inline-flex min-h-11 items-center gap-2 bg-ink px-4 text-sm font-bold text-white"
         ><Plus size={17} /> Invite person</button
       >
+    {:else if data.canManage}
+      <p class="max-w-64 text-xs leading-relaxed text-muted" role="status">
+        No roles within your authority are available to assign.
+      </p>
     {/if}
   </PageHeader>
 
@@ -101,7 +107,7 @@
     </div>
   {/if}
 
-  {#if showInvite}
+  {#if showInvite && data.roles.length > 0}
     <form
       method="POST"
       action="?/invite"
@@ -162,9 +168,9 @@
                 "No role"}
             </div>
           </div>
-          {#if data.canManage}
+          {#if account.canReset || account.canToggle}
             <div class="col-span-2 flex flex-wrap gap-2 sm:col-span-1">
-              {#if account.kind === "user"}<form method="POST" action="?/reset">
+              {#if account.canReset}<form method="POST" action="?/reset">
                   <input
                     type="hidden"
                     name="actorId"
@@ -175,19 +181,21 @@
                     >Reset password</button
                   >
                 </form>{/if}
-              <form method="POST" action="?/toggle">
-                <input type="hidden" name="actorId" value={account.id} />
-                <input
-                  type="hidden"
-                  name="disabled"
-                  value={account.disabled ? "false" : "true"}
-                />
-                <button
-                  aria-label={`${account.disabled ? "Enable" : "Disable"} ${account.name}`}
-                  class={`min-h-9 border px-3 text-xs font-bold ${account.disabled ? "border-rule text-muted" : "border-green/30 text-green"}`}
-                  >{account.disabled ? "Enable" : "Disable"}</button
-                >
-              </form>
+              {#if account.canToggle}
+                <form method="POST" action="?/toggle">
+                  <input type="hidden" name="actorId" value={account.id} />
+                  <input
+                    type="hidden"
+                    name="disabled"
+                    value={account.disabled ? "false" : "true"}
+                  />
+                  <button
+                    aria-label={`${account.disabled ? "Enable" : "Disable"} ${account.name}`}
+                    class={`min-h-9 border px-3 text-xs font-bold ${account.disabled ? "border-rule text-muted" : "border-green/30 text-green"}`}
+                    >{account.disabled ? "Enable" : "Disable"}</button
+                  >
+                </form>
+              {/if}
             </div>
           {:else}
             <span class="text-xs font-bold text-green"
@@ -195,7 +203,7 @@
             >
           {/if}
         </div>
-        {#if account.kind === "service" && data.canManage}
+        {#if account.canEditPermissions}
           <details class="border-b border-rule bg-paper px-4 py-3">
             <summary class="cursor-pointer text-xs font-bold"
               >Edit {account.name} permissions</summary

@@ -30,6 +30,24 @@ export function canAdministerPermissions(
   );
 }
 
+export function canAdministerUserIdentity(
+  administrator: readonly string[],
+  householdId: string,
+  memberships: ReadonlyArray<{
+    householdId: string;
+    permissions: readonly string[];
+  }>,
+) {
+  return (
+    memberships.length > 0 &&
+    memberships.every((membership) => membership.householdId === householdId) &&
+    canAdministerPermissions(
+      administrator,
+      memberships.flatMap((membership) => membership.permissions),
+    )
+  );
+}
+
 export function requirePagePermission(
   actor: App.Locals["actor"],
   permission: Permission,

@@ -12,6 +12,10 @@ import {
   webSessions,
 } from "../db/schema";
 import { requireDb } from "../db";
+import {
+  canAdministerPermissions,
+  canAdministerUserIdentity,
+} from "./authorization";
 import { createWebSession } from "./oidc";
 
 const loginWindowMs = 15 * 60_000;
@@ -174,19 +178,48 @@ export async function createInvitation(
 ) {
   const database = requireDb();
   const normalizedEmail = input.email.trim().toLowerCase();
-  const [role] = await database
-    .select({ id: roles.id })
-    .from(roles)
-    .where(and(eq(roles.id, input.roleId), eq(roles.householdId, householdId)))
-    .limit(1);
-  if (!role) return null;
-
   const { token, tokenHash } = createOneTimeToken("domino_invite");
   const expiresInHours = Math.max(
     1,
     Math.min(input.expiresInHours ?? 72, 24 * 30),
   );
   const invitation = await database.transaction(async (tx) => {
+    const inviterRoles = await tx
+      .select({ permissions: roles.permissions })
+      .from(actors)
+      .innerJoin(actorRoles, eq(actorRoles.actorId, actors.id))
+      .innerJoin(roles, eq(actorRoles.roleId, roles.id))
+      .where(
+        and(
+          eq(actors.id, invitedByActorId),
+          eq(actors.householdId, householdId),
+          eq(actors.disabled, false),
+          eq(roles.householdId, householdId),
+        ),
+      );
+    const inviterPermissions = [
+      ...new Set(inviterRoles.flatMap((role) => role.permissions)),
+    ];
+    if (
+      !inviterPermissions.includes("*") &&
+      !inviterPermissions.includes("household:manage")
+    ) {
+      return null;
+    }
+    const [role] = await tx
+      .select({ id: roles.id, permissions: roles.permissions })
+      .from(roles)
+      .where(
+        and(eq(roles.id, input.roleId), eq(roles.householdId, householdId)),
+      )
+      .for("update")
+      .limit(1);
+    if (
+      !role ||
+      !canAdministerPermissions(inviterPermissions, role.permissions)
+    ) {
+      return null;
+    }
     const [created] = await tx
       .insert(userInvitations)
       .values({
@@ -210,6 +243,7 @@ export async function createInvitation(
     });
     return created;
   });
+  if (!invitation) return null;
   return { invitation, token };
 }
 
@@ -313,15 +347,87 @@ export async function acceptInvitation(
 export async function createPasswordReset(
   userId: string,
   createdByActorId: string,
+  householdId: string,
 ) {
   const { token, tokenHash } = createOneTimeToken("domino_reset");
   const database = requireDb();
-  await database.transaction(async (tx) => {
-    const [creator] = await tx
-      .select({ householdId: actors.householdId })
-      .from(actors)
-      .where(eq(actors.id, createdByActorId))
+  const authorized = await database.transaction(async (tx) => {
+    const [targetUser] = await tx
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.id, userId))
+      .for("update")
       .limit(1);
+    if (!targetUser) return false;
+
+    const targetActors = await tx
+      .select({
+        id: actors.id,
+        householdId: actors.householdId,
+      })
+      .from(actors)
+      .where(eq(actors.userId, userId))
+      .for("update");
+    if (targetActors.length === 0) return false;
+
+    const creatorRoles = await tx
+      .select({ permissions: roles.permissions })
+      .from(actors)
+      .innerJoin(actorRoles, eq(actorRoles.actorId, actors.id))
+      .innerJoin(roles, eq(actorRoles.roleId, roles.id))
+      .where(
+        and(
+          eq(actors.id, createdByActorId),
+          eq(actors.householdId, householdId),
+          eq(actors.disabled, false),
+          eq(roles.householdId, householdId),
+        ),
+      );
+    const creatorPermissions = [
+      ...new Set(creatorRoles.flatMap((role) => role.permissions)),
+    ];
+    if (
+      !creatorPermissions.includes("*") &&
+      !creatorPermissions.includes("household:manage")
+    ) {
+      return false;
+    }
+
+    const targetRoleRows = await tx
+      .select({
+        roleId: roles.id,
+        permissions: roles.permissions,
+      })
+      .from(actorRoles)
+      .innerJoin(roles, eq(actorRoles.roleId, roles.id))
+      .where(
+        inArray(
+          actorRoles.actorId,
+          targetActors.map((actor) => actor.id),
+        ),
+      );
+    const roleIds = [...new Set(targetRoleRows.map((row) => row.roleId))];
+    const lockedTargetRoles =
+      roleIds.length === 0
+        ? []
+        : await tx
+            .select({ permissions: roles.permissions })
+            .from(roles)
+            .where(inArray(roles.id, roleIds))
+            .for("update");
+    if (
+      !canAdministerUserIdentity(
+        creatorPermissions,
+        householdId,
+        targetActors.map((actor) => ({
+          householdId: actor.householdId,
+          permissions: lockedTargetRoles.flatMap((role) => role.permissions),
+        })),
+      )
+    ) {
+      return false;
+    }
+
     await tx
       .update(passwordResetTokens)
       .set({ consumedAt: new Date() })
@@ -340,19 +446,18 @@ export async function createPasswordReset(
         expiresAt: new Date(Date.now() + 60 * 60_000),
       })
       .returning({ id: passwordResetTokens.id });
-    if (creator) {
-      await tx.insert(auditEvents).values({
-        householdId: creator.householdId,
-        actorId: createdByActorId,
-        action: "person.password_reset.issue",
-        resourceType: "password_reset",
-        resourceId: reset.id,
-        summary: "Issued a password-reset link",
-        metadata: { userId },
-      });
-    }
+    await tx.insert(auditEvents).values({
+      householdId,
+      actorId: createdByActorId,
+      action: "person.password_reset.issue",
+      resourceType: "password_reset",
+      resourceId: reset.id,
+      summary: "Issued a password-reset link",
+      metadata: { userId },
+    });
+    return true;
   });
-  return token;
+  return authorized ? token : null;
 }
 
 export async function inspectPasswordReset(token: string) {

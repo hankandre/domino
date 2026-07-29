@@ -1,9 +1,10 @@
 import { fail } from "@sveltejs/kit";
 import type { Actions, PageServerLoad } from "./$types";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { createInvitation, createPasswordReset } from "$lib/server/auth/local";
 import {
   canAdministerPermissions,
+  canAdministerUserIdentity,
   requirePagePermission,
 } from "$lib/server/auth/authorization";
 import { requireDb } from "$lib/server/db";
@@ -70,6 +71,9 @@ export const load: PageServerLoad = async ({ locals }) => {
           roleId: "demo-owner-role",
           roleName: "Owner",
           permissions: ["*"],
+          canReset: true,
+          canToggle: false,
+          canEditPermissions: false,
         },
         {
           id: "demo-hermes",
@@ -81,9 +85,13 @@ export const load: PageServerLoad = async ({ locals }) => {
           roleId: "demo-agent-role",
           roleName: "Claim assistant",
           permissions: ["warranties:read", "claims:read"],
+          canReset: false,
+          canToggle: true,
+          canEditPermissions: true,
         },
       ],
       roles: [{ id: "demo-member", name: "Member" }],
+      grantablePermissions: [...permissions],
       canManage: true,
     };
   }
@@ -101,6 +109,7 @@ export const load: PageServerLoad = async ({ locals }) => {
         roleId: roles.id,
         roleName: roles.name,
         permissions: roles.permissions,
+        roleSystem: roles.system,
       })
       .from(actors)
       .leftJoin(users, eq(actors.userId, users.id))
@@ -117,10 +126,96 @@ export const load: PageServerLoad = async ({ locals }) => {
       .from(roles)
       .where(eq(roles.householdId, actor.householdId)),
   ]);
+  const actorPermissionMap = new Map<string, string[]>();
+  const actorRoleCount = new Map<string, number>();
+  for (const account of accounts) {
+    actorPermissionMap.set(account.id, [
+      ...new Set([
+        ...(actorPermissionMap.get(account.id) ?? []),
+        ...(account.permissions ?? []),
+      ]),
+    ]);
+    if (account.roleId) {
+      actorRoleCount.set(account.id, (actorRoleCount.get(account.id) ?? 0) + 1);
+    }
+  }
+  const userIds = [
+    ...new Set(
+      accounts
+        .map((account) => account.userId)
+        .filter((userId): userId is string => Boolean(userId)),
+    ),
+  ];
+  const identityMemberships =
+    userIds.length === 0
+      ? []
+      : await database
+          .select({
+            userId: actors.userId,
+            householdId: actors.householdId,
+            permissions: roles.permissions,
+          })
+          .from(actors)
+          .leftJoin(actorRoles, eq(actorRoles.actorId, actors.id))
+          .leftJoin(roles, eq(actorRoles.roleId, roles.id))
+          .where(inArray(actors.userId, userIds));
+  const identityAuthority = new Map<
+    string,
+    { households: Set<string>; permissions: string[] }
+  >();
+  for (const membership of identityMemberships) {
+    if (!membership.userId) continue;
+    const authority = identityAuthority.get(membership.userId) ?? {
+      households: new Set<string>(),
+      permissions: [],
+    };
+    authority.households.add(membership.householdId);
+    authority.permissions = [
+      ...new Set([...authority.permissions, ...(membership.permissions ?? [])]),
+    ];
+    identityAuthority.set(membership.userId, authority);
+  }
   return {
-    accounts,
+    accounts: accounts.map((account) => {
+      const targetPermissions = actorPermissionMap.get(account.id) ?? [];
+      const canAdminister = canAdministerPermissions(
+        actor.permissions,
+        targetPermissions,
+      );
+      const identity = account.userId
+        ? identityAuthority.get(account.userId)
+        : undefined;
+      const resetWithinAuthority =
+        account.kind === "user" &&
+        Boolean(identity) &&
+        canAdministerUserIdentity(
+          actor.permissions,
+          actor.householdId,
+          identity
+            ? [...identity.households].map((householdId) => ({
+                householdId,
+                permissions: identity.permissions,
+              }))
+            : [],
+        );
+      return {
+        ...account,
+        canReset: resetWithinAuthority,
+        canToggle: account.id !== actor.id && canAdminister,
+        canEditPermissions:
+          account.kind === "service" &&
+          account.roleSystem === false &&
+          actorRoleCount.get(account.id) === 1 &&
+          canAdminister,
+      };
+    }),
     roles: householdRoles.filter((role) =>
       canAdministerPermissions(actor.permissions, role.permissions),
+    ),
+    grantablePermissions: permissions.filter(
+      (permission) =>
+        actor.permissions.includes("*") ||
+        actor.permissions.includes(permission),
     ),
     canManage: requireManager(locals.actor),
   };
@@ -185,33 +280,62 @@ export const actions: Actions = {
     if (actorId === locals.actor.id && disabled) {
       return fail(400, { error: "You cannot disable your own account." });
     }
-    const targetAuthority = await accountAuthority(
-      actorId,
-      locals.actor.householdId,
-    );
-    if (!targetAuthority) return fail(404, { error: "Account not found." });
-    if (
-      !canAdministerPermissions(
-        locals.actor.permissions,
-        targetAuthority.permissions,
-      )
-    ) {
-      return fail(403, {
-        error: "You cannot manage an account with permissions you do not hold.",
-      });
-    }
     const updated = await requireDb().transaction(async (tx) => {
+      const managerRoles = await tx
+        .select({ permissions: roles.permissions })
+        .from(actors)
+        .innerJoin(actorRoles, eq(actorRoles.actorId, actors.id))
+        .innerJoin(roles, eq(actorRoles.roleId, roles.id))
+        .where(
+          and(
+            eq(actors.id, locals.actor!.id),
+            eq(actors.householdId, locals.actor!.householdId),
+            eq(actors.disabled, false),
+            eq(roles.householdId, locals.actor!.householdId),
+          ),
+        );
+      const managerPermissions = [
+        ...new Set(managerRoles.flatMap((role) => role.permissions)),
+      ];
+      if (
+        !managerPermissions.includes("*") &&
+        !managerPermissions.includes("household:manage")
+      ) {
+        return "forbidden" as const;
+      }
       const [account] = await tx
-        .update(actors)
-        .set({ disabled, updatedAt: new Date() })
+        .select({ id: actors.id, name: actors.name })
+        .from(actors)
         .where(
           and(
             eq(actors.id, actorId),
             eq(actors.householdId, locals.actor!.householdId),
           ),
         )
-        .returning({ id: actors.id, name: actors.name });
+        .for("update")
+        .limit(1);
       if (!account) return null;
+      const targetRoles = await tx
+        .select({ permissions: roles.permissions })
+        .from(actorRoles)
+        .innerJoin(roles, eq(actorRoles.roleId, roles.id))
+        .where(
+          and(
+            eq(actorRoles.actorId, account.id),
+            eq(roles.householdId, locals.actor!.householdId),
+          ),
+        )
+        .for("update");
+      const targetPermissions = [
+        ...new Set(targetRoles.flatMap((role) => role.permissions)),
+      ];
+      if (!canAdministerPermissions(managerPermissions, targetPermissions)) {
+        return "forbidden" as const;
+      }
+      await tx
+        .update(actors)
+        .set({ disabled, updatedAt: new Date() })
+        .where(eq(actors.id, account.id));
       if (disabled) {
         const revokedAt = new Date();
         await tx
@@ -233,6 +357,11 @@ export const actions: Actions = {
       });
       return account;
     });
+    if (updated === "forbidden") {
+      return fail(403, {
+        error: "You cannot manage an account with permissions you do not hold.",
+      });
+    }
     return updated
       ? { accountUpdated: true }
       : fail(404, { error: "Account not found." });
@@ -258,23 +387,59 @@ export const actions: Actions = {
         error: "You cannot grant permissions you do not hold.",
       });
     }
-    const [target] = await requireDb()
-      .select({ roleId: roles.id })
-      .from(actors)
-      .innerJoin(actorRoles, eq(actorRoles.actorId, actors.id))
-      .innerJoin(roles, eq(actorRoles.roleId, roles.id))
-      .where(
-        and(
-          eq(actors.id, actorId),
-          eq(actors.kind, "service"),
-          eq(actors.householdId, locals.actor.householdId),
-          eq(roles.householdId, locals.actor.householdId),
-          eq(roles.system, false),
-        ),
-      )
-      .limit(1);
-    if (!target) return fail(404, { error: "Service account not found." });
-    await requireDb().transaction(async (tx) => {
+    const result = await requireDb().transaction(async (tx) => {
+      const managerRoles = await tx
+        .select({ permissions: roles.permissions })
+        .from(actors)
+        .innerJoin(actorRoles, eq(actorRoles.actorId, actors.id))
+        .innerJoin(roles, eq(actorRoles.roleId, roles.id))
+        .where(
+          and(
+            eq(actors.id, locals.actor!.id),
+            eq(actors.householdId, locals.actor!.householdId),
+            eq(actors.disabled, false),
+            eq(roles.householdId, locals.actor!.householdId),
+          ),
+        );
+      const managerPermissions = [
+        ...new Set(managerRoles.flatMap((role) => role.permissions)),
+      ];
+      if (
+        !managerPermissions.includes("*") &&
+        !managerPermissions.includes("household:manage")
+      ) {
+        return "forbidden" as const;
+      }
+      if (!canAdministerPermissions(managerPermissions, requested)) {
+        return "forbidden" as const;
+      }
+      const targetRoles = await tx
+        .select({
+          roleId: roles.id,
+          permissions: roles.permissions,
+          system: roles.system,
+        })
+        .from(actors)
+        .innerJoin(actorRoles, eq(actorRoles.actorId, actors.id))
+        .innerJoin(roles, eq(actorRoles.roleId, roles.id))
+        .where(
+          and(
+            eq(actors.id, actorId),
+            eq(actors.kind, "service"),
+            eq(actors.householdId, locals.actor!.householdId),
+            eq(roles.householdId, locals.actor!.householdId),
+          ),
+        )
+        .for("update");
+      if (targetRoles.length !== 1 || targetRoles[0].system)
+        return "not-found" as const;
+      const target = targetRoles[0];
+      const currentPermissions = [
+        ...new Set(targetRoles.flatMap((role) => role.permissions)),
+      ];
+      if (!canAdministerPermissions(managerPermissions, currentPermissions)) {
+        return "forbidden" as const;
+      }
       await tx
         .update(roles)
         .set({ permissions: requested, updatedAt: new Date() })
@@ -288,7 +453,15 @@ export const actions: Actions = {
         summary: "Updated service-account permissions",
         metadata: { permissions: requested },
       });
+      return "updated" as const;
     });
+    if (result === "not-found")
+      return fail(404, { error: "Service account not found." });
+    if (result === "forbidden") {
+      return fail(403, {
+        error: "You cannot manage an account with permissions you do not hold.",
+      });
+    }
     return { permissionsSaved: true };
   },
   reset: async ({ locals, request, url }) => {
@@ -309,7 +482,16 @@ export const actions: Actions = {
         error: "You cannot reset an account with permissions you do not hold.",
       });
     }
-    const token = await createPasswordReset(target.userId, locals.actor.id);
+    const token = await createPasswordReset(
+      target.userId,
+      locals.actor.id,
+      locals.actor.householdId,
+    );
+    if (!token) {
+      return fail(403, {
+        error: "This identity cannot be reset by a household administrator.",
+      });
+    }
     return {
       resetUrl: new URL(
         `/reset/${token}`,
