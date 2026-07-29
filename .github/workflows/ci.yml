@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  app:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - run: bun run check
+      - run: bun test
+      - run: bun run build
+
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+
+  database:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: domino
+          POSTGRES_USER: domino
+          POSTGRES_PASSWORD: ci-database-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U domino -d domino"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://domino:ci-database-password@127.0.0.1:5432/domino
+      DOMINO_DEMO_MODE: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - run: bun run db:migrate
+      - name: Bootstrap and verify a household
+        run: |
+          password_file="$(mktemp)"
+          trap 'rm -f "$password_file"' EXIT
+          printf '%s' 'ci-owner-password-2026' > "$password_file"
+          bun scripts/bootstrap-owner.mjs \
+            --email owner@example.test \
+            --name "CI Owner" \
+            --password-file "$password_file"
+          test "$(psql "$DATABASE_URL" -tAc "select count(*) from roles")" = "4"
+          test "$(psql "$DATABASE_URL" -tAc "select count(*) from actors where kind = 'user')" = "1"
+
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Compose model
+        run: |
+          secret_file="$(mktemp)"
+          trap 'rm -f "$secret_file"' EXIT
+          POSTGRES_PASSWORD=ci-compose-password \
+          PAPERLESS_TOKEN_PATH="$secret_file" \
+          DOMINO_OIDC_CLIENT_SECRET_PATH="$secret_file" \
+          DOMINO_SESSION_SECRET_PATH="$secret_file" \
+            docker compose config --quiet
+      - run: docker build --tag domino:ci .
+      - name: Verify application image identity
+        run: |
+          test "$(docker image inspect domino:ci --format '{{.Config.User}}')" = "10001:10001"
+          docker run --rm --entrypoint /bin/sh domino:ci -c 'test ! -e /usr/local/bin/domino'
+      - run: docker build --file Dockerfile.cli --tag domino-cli:ci .
+      - name: Verify standalone CLI image
+        run: |
+          test "$(docker image inspect domino-cli:ci --format '{{.Config.User}}')" = "10001:10001"
+          test "$(docker run --rm domino-cli:ci --version)" = "domino 0.1.0"

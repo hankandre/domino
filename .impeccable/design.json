@@ -1,0 +1,434 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-07-27T19:43:04Z",
+  "title": "Design System: Domino",
+  "extensions": {
+    "colorMeta": {
+      "paper": {
+        "role": "neutral",
+        "displayName": "Household Paper",
+        "canonical": "#f5f3ed",
+        "tonalRamp": [
+          "oklch(15% 0.008 91.5)",
+          "oklch(26% 0.008 91.5)",
+          "oklch(38% 0.008 91.5)",
+          "oklch(50% 0.008 91.5)",
+          "oklch(62% 0.008 91.5)",
+          "oklch(74% 0.008 91.5)",
+          "oklch(86% 0.008 91.5)",
+          "oklch(95% 0.008 91.5)"
+        ]
+      },
+      "sheet": {
+        "role": "neutral",
+        "displayName": "Working Sheet",
+        "canonical": "#fffefa",
+        "tonalRamp": [
+          "oklch(15% 0.005 95.1)",
+          "oklch(26% 0.005 95.1)",
+          "oklch(38% 0.005 95.1)",
+          "oklch(50% 0.005 95.1)",
+          "oklch(62% 0.005 95.1)",
+          "oklch(74% 0.005 95.1)",
+          "oklch(86% 0.005 95.1)",
+          "oklch(95% 0.005 95.1)"
+        ]
+      },
+      "white": {
+        "role": "neutral",
+        "displayName": "Navigation White",
+        "canonical": "#ffffff",
+        "tonalRamp": [
+          "oklch(15% 0.000 89.9)",
+          "oklch(26% 0.000 89.9)",
+          "oklch(38% 0.000 89.9)",
+          "oklch(50% 0.000 89.9)",
+          "oklch(62% 0.000 89.9)",
+          "oklch(74% 0.000 89.9)",
+          "oklch(86% 0.000 89.9)",
+          "oklch(95% 0.000 89.9)"
+        ]
+      },
+      "ink": {
+        "role": "primary",
+        "displayName": "Dispatch Ink",
+        "canonical": "#172033",
+        "tonalRamp": [
+          "oklch(15% 0.039 264.4)",
+          "oklch(26% 0.039 264.4)",
+          "oklch(38% 0.039 264.4)",
+          "oklch(50% 0.039 264.4)",
+          "oklch(62% 0.039 264.4)",
+          "oklch(74% 0.039 264.4)",
+          "oklch(86% 0.039 264.4)",
+          "oklch(95% 0.039 264.4)"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Muted Ledger Ink",
+        "canonical": "#687184",
+        "tonalRamp": [
+          "oklch(15% 0.032 265.3)",
+          "oklch(26% 0.032 265.3)",
+          "oklch(38% 0.032 265.3)",
+          "oklch(50% 0.032 265.3)",
+          "oklch(62% 0.032 265.3)",
+          "oklch(74% 0.032 265.3)",
+          "oklch(86% 0.032 265.3)",
+          "oklch(95% 0.032 265.3)"
+        ]
+      },
+      "rule": {
+        "role": "neutral",
+        "displayName": "Routing Rule",
+        "canonical": "#d8d9d3",
+        "tonalRamp": [
+          "oklch(15% 0.008 114.2)",
+          "oklch(26% 0.008 114.2)",
+          "oklch(38% 0.008 114.2)",
+          "oklch(50% 0.008 114.2)",
+          "oklch(62% 0.008 114.2)",
+          "oklch(74% 0.008 114.2)",
+          "oklch(86% 0.008 114.2)",
+          "oklch(95% 0.008 114.2)"
+        ]
+      },
+      "orange": {
+        "role": "secondary",
+        "displayName": "Safety Orange",
+        "canonical": "#e65322",
+        "tonalRamp": [
+          "oklch(15% 0.192 37.4)",
+          "oklch(26% 0.192 37.4)",
+          "oklch(38% 0.192 37.4)",
+          "oklch(50% 0.192 37.4)",
+          "oklch(62% 0.192 37.4)",
+          "oklch(74% 0.192 37.4)",
+          "oklch(86% 0.192 37.4)",
+          "oklch(95% 0.192 37.4)"
+        ]
+      },
+      "orange-ink": {
+        "role": "secondary",
+        "displayName": "Exception Ink",
+        "canonical": "#99330f",
+        "tonalRamp": [
+          "oklch(15% 0.143 37.7)",
+          "oklch(26% 0.143 37.7)",
+          "oklch(38% 0.143 37.7)",
+          "oklch(50% 0.143 37.7)",
+          "oklch(62% 0.143 37.7)",
+          "oklch(74% 0.143 37.7)",
+          "oklch(86% 0.143 37.7)",
+          "oklch(95% 0.143 37.7)"
+        ]
+      },
+      "orange-soft": {
+        "role": "secondary",
+        "displayName": "Exception Wash",
+        "canonical": "#fff0e8",
+        "tonalRamp": [
+          "oklch(15% 0.019 50.2)",
+          "oklch(26% 0.019 50.2)",
+          "oklch(38% 0.019 50.2)",
+          "oklch(50% 0.019 50.2)",
+          "oklch(62% 0.019 50.2)",
+          "oklch(74% 0.019 50.2)",
+          "oklch(86% 0.019 50.2)",
+          "oklch(95% 0.019 50.2)"
+        ]
+      },
+      "blue-soft": {
+        "role": "tertiary",
+        "displayName": "Reference Blue Wash",
+        "canonical": "#eaf0f7",
+        "tonalRamp": [
+          "oklch(15% 0.011 252.1)",
+          "oklch(26% 0.011 252.1)",
+          "oklch(38% 0.011 252.1)",
+          "oklch(50% 0.011 252.1)",
+          "oklch(62% 0.011 252.1)",
+          "oklch(74% 0.011 252.1)",
+          "oklch(86% 0.011 252.1)",
+          "oklch(95% 0.011 252.1)"
+        ]
+      },
+      "blue-ink": {
+        "role": "tertiary",
+        "displayName": "Reference Blue Ink",
+        "canonical": "#294968",
+        "tonalRamp": [
+          "oklch(15% 0.065 249.1)",
+          "oklch(26% 0.065 249.1)",
+          "oklch(38% 0.065 249.1)",
+          "oklch(50% 0.065 249.1)",
+          "oklch(62% 0.065 249.1)",
+          "oklch(74% 0.065 249.1)",
+          "oklch(86% 0.065 249.1)",
+          "oklch(95% 0.065 249.1)"
+        ]
+      },
+      "green": {
+        "role": "tertiary",
+        "displayName": "Coverage Green",
+        "canonical": "#176b4d",
+        "tonalRamp": [
+          "oklch(15% 0.092 163.9)",
+          "oklch(26% 0.092 163.9)",
+          "oklch(38% 0.092 163.9)",
+          "oklch(50% 0.092 163.9)",
+          "oklch(62% 0.092 163.9)",
+          "oklch(74% 0.092 163.9)",
+          "oklch(86% 0.092 163.9)",
+          "oklch(95% 0.092 163.9)"
+        ]
+      },
+      "green-soft": {
+        "role": "tertiary",
+        "displayName": "Coverage Wash",
+        "canonical": "#e7f3ed",
+        "tonalRamp": [
+          "oklch(15% 0.015 164.7)",
+          "oklch(26% 0.015 164.7)",
+          "oklch(38% 0.015 164.7)",
+          "oklch(50% 0.015 164.7)",
+          "oklch(62% 0.015 164.7)",
+          "oklch(74% 0.015 164.7)",
+          "oklch(86% 0.015 164.7)",
+          "oklch(95% 0.015 164.7)"
+        ]
+      },
+      "red": {
+        "role": "tertiary",
+        "displayName": "Claim Red",
+        "canonical": "#a3332b",
+        "tonalRamp": [
+          "oklch(15% 0.149 28.0)",
+          "oklch(26% 0.149 28.0)",
+          "oklch(38% 0.149 28.0)",
+          "oklch(50% 0.149 28.0)",
+          "oklch(62% 0.149 28.0)",
+          "oklch(74% 0.149 28.0)",
+          "oklch(86% 0.149 28.0)",
+          "oklch(95% 0.149 28.0)"
+        ]
+      },
+      "red-soft": {
+        "role": "tertiary",
+        "displayName": "Claim Wash",
+        "canonical": "#fae9e7",
+        "tonalRamp": [
+          "oklch(15% 0.019 25.6)",
+          "oklch(26% 0.019 25.6)",
+          "oklch(38% 0.019 25.6)",
+          "oklch(50% 0.019 25.6)",
+          "oklch(62% 0.019 25.6)",
+          "oklch(74% 0.019 25.6)",
+          "oklch(86% 0.019 25.6)",
+          "oklch(95% 0.019 25.6)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Record Display",
+        "purpose": "Product identities and the largest operational titles."
+      },
+      "headline": {
+        "displayName": "Dispatch Headline",
+        "purpose": "Primary page messages and inventory orientation."
+      },
+      "title": {
+        "displayName": "Ledger Title",
+        "purpose": "Section headings, card names, and claim subjects."
+      },
+      "body": {
+        "displayName": "Working Body",
+        "purpose": "Metadata, instructions, notes, and supporting descriptions."
+      },
+      "label": {
+        "displayName": "Routing Label",
+        "purpose": "Kicker lines, field names, statuses, and ledger metadata."
+      }
+    },
+    "shadows": [
+      {
+        "name": "raised-sheet",
+        "value": "0 14px 34px rgba(23, 32, 51, 0.08), 0 2px 5px rgba(23, 32, 51, 0.05)",
+        "purpose": "Ambient lift for a hovered product card or deliberately floating sheet."
+      },
+      {
+        "name": "card-baseline",
+        "value": "0 1px 0 rgba(23, 32, 51, 0.04)",
+        "purpose": "Nearly flat grounding line for resting product cards."
+      },
+      {
+        "name": "search-focus-edge",
+        "value": "0 4px 0 #e65322",
+        "purpose": "Structural lower edge when focus is within universal search."
+      }
+    ],
+    "motion": [
+      {
+        "name": "interactive-lift",
+        "value": "300ms ease-out",
+        "purpose": "Product and claim cards lift 4px while their shadow strengthens."
+      },
+      {
+        "name": "image-settle",
+        "value": "500ms ease-out",
+        "purpose": "Product imagery scales subtly to 1.035 on card hover."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "0.01ms",
+        "purpose": "Global transition and animation duration under prefers-reduced-motion."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "sm",
+        "value": "640px"
+      },
+      {
+        "name": "lg",
+        "value": "1024px"
+      },
+      {
+        "name": "xl",
+        "value": "1280px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The default solid action for adding, saving, or advancing a record.",
+      "html": "<button type=\"button\" class=\"ds-btn-primary\"><svg aria-hidden=\"true\" viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\"><path d=\"M12 5v14M5 12h14\"/></svg>Add product</button>",
+      "css": ".ds-btn-primary { min-height: 48px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 0 20px; border: 0; border-radius: 0; background: var(--color-ink); color: white; font-family: var(--font-sans); font-size: 0.875rem; font-weight: 700; cursor: pointer; transition: background-color 150ms cubic-bezier(0.4, 0, 0.2, 1); } .ds-btn-primary:hover { background: var(--color-orange); } .ds-btn-primary:active { background: var(--color-ink); } .ds-btn-primary:focus-visible { outline: 3px solid color-mix(in srgb, var(--color-orange) 70%, white); outline-offset: 3px; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "A bordered working action for filters, attachments, and supporting tasks.",
+      "html": "<button type=\"button\" class=\"ds-btn-secondary\"><svg aria-hidden=\"true\" viewBox=\"0 0 24 24\" width=\"17\" height=\"17\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3\"/><path d=\"M1 14h6M9 8h6M17 16h6\"/></svg>Filters</button>",
+      "css": ".ds-btn-secondary { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 0 16px; border: 1px solid var(--color-rule); border-radius: 0; background: var(--color-sheet); color: var(--color-ink); font-family: var(--font-sans); font-size: 0.875rem; font-weight: 700; cursor: pointer; transition: border-color 150ms cubic-bezier(0.4, 0, 0.2, 1), background-color 150ms cubic-bezier(0.4, 0, 0.2, 1); } .ds-btn-secondary:hover { border-color: var(--color-ink); } .ds-btn-secondary:active { background: var(--color-paper); } .ds-btn-secondary:focus-visible { outline: 3px solid color-mix(in srgb, var(--color-orange) 70%, white); outline-offset: 3px; }"
+    },
+    {
+      "name": "Universal Search",
+      "kind": "input",
+      "refersTo": "search-field",
+      "description": "The dominant household lookup for product, date, serial, retailer, and claim terms.",
+      "html": "<label class=\"ds-search\"><svg aria-hidden=\"true\" viewBox=\"0 0 24 24\" width=\"22\" height=\"22\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\"><circle cx=\"11\" cy=\"11\" r=\"8\"/><path d=\"m21 21-4.3-4.3\"/></svg><span class=\"ds-search-label\">Search household inventory</span><input class=\"ds-search-input\" placeholder=\"Product, date, serial, retailer, claim…\"/><kbd class=\"ds-search-key\">/</kbd></label>",
+      "css": ".ds-search { min-height: 48px; display: flex; align-items: center; gap: 12px; padding: 0 16px; border: 1px solid var(--color-ink); border-radius: 0; background: var(--color-sheet); color: var(--color-ink); font-family: var(--font-sans); } .ds-search:focus-within { box-shadow: 0 4px 0 var(--color-orange); } .ds-search-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; } .ds-search-input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: var(--color-ink); font: inherit; font-size: 1rem; font-weight: 600; } .ds-search-input::placeholder { color: var(--color-muted); } .ds-search-key { padding: 4px 8px; border: 1px solid var(--color-rule); border-radius: 0; background: var(--color-paper); color: var(--color-muted); font-size: 0.68rem; font-weight: 700; }"
+    },
+    {
+      "name": "Active Navigation Item",
+      "kind": "nav",
+      "refersTo": "navigation-active",
+      "description": "The current destination in the blue-black desktop or mobile navigation rail.",
+      "html": "<a href=\"#\" class=\"ds-nav-active\"><svg aria-hidden=\"true\" viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect width=\"7\" height=\"7\" x=\"3\" y=\"3\"/><rect width=\"7\" height=\"7\" x=\"14\" y=\"3\"/><rect width=\"7\" height=\"7\" x=\"14\" y=\"14\"/><rect width=\"7\" height=\"7\" x=\"3\" y=\"14\"/></svg><span>Inventory</span></a>",
+      "css": ".ds-nav-active { min-height: 44px; display: flex; align-items: center; gap: 12px; padding: 0 12px; border-radius: 0; background: var(--color-sheet); color: var(--color-ink); font-family: var(--font-sans); font-size: 0.875rem; font-weight: 700; text-decoration: none; } .ds-nav-active:hover { background: white; } .ds-nav-active:active { background: var(--color-paper); } .ds-nav-active:focus-visible { outline: 3px solid color-mix(in srgb, var(--color-orange) 70%, white); outline-offset: 3px; }"
+    },
+    {
+      "name": "Covered Badge",
+      "kind": "chip",
+      "refersTo": "badge-success",
+      "description": "The square semantic badge for confirmed active coverage.",
+      "html": "<span class=\"ds-badge-success\">Covered</span>",
+      "css": ".ds-badge-success { min-height: 24px; display: inline-flex; align-items: center; padding: 2px 8px; border: 1px solid color-mix(in srgb, var(--color-green) 25%, transparent); border-radius: 0; background: var(--color-green-soft); color: var(--color-green); font-family: var(--font-sans); font-size: 0.66rem; font-weight: 700; line-height: 1.2; letter-spacing: 0.045em; text-transform: uppercase; }"
+    },
+    {
+      "name": "Attention Badge",
+      "kind": "chip",
+      "refersTo": "badge-attention",
+      "description": "The square semantic badge for expiring coverage and active attention.",
+      "html": "<span class=\"ds-badge-attention\">Expiring soon</span>",
+      "css": ".ds-badge-attention { min-height: 24px; display: inline-flex; align-items: center; padding: 2px 8px; border: 1px solid color-mix(in srgb, var(--color-orange) 30%, transparent); border-radius: 0; background: var(--color-orange-soft); color: #99330f; font-family: var(--font-sans); font-size: 0.66rem; font-weight: 700; line-height: 1.2; letter-spacing: 0.045em; text-transform: uppercase; }"
+    },
+    {
+      "name": "Product Docket Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "The signature marketplace-like record that combines product identity, coverage, claim state, documents, and next action.",
+      "html": "<article class=\"ds-product-card\"><div class=\"ds-product-image\"><span class=\"ds-product-mark\"><svg aria-hidden=\"true\" viewBox=\"0 0 24 24\" width=\"22\" height=\"22\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z\"/><path d=\"m3.3 7 8.7 5 8.7-5M12 22V12\"/></svg></span><span class=\"ds-card-badge\">Covered</span></div><div class=\"ds-product-body\"><p class=\"ds-product-brand\">BOSCH</p><h3 class=\"ds-product-name\">800 Series Dishwasher</h3><p class=\"ds-product-model\">SHPM88Z75N</p><dl class=\"ds-product-dates\"><div><dt>Coverage until</dt><dd>May 14, 2027</dd></div><div><dt>Purchased</dt><dd>May 14, 2024</dd></div></dl><div class=\"ds-product-claim\"><strong>Leak from lower seal</strong><span>Add a photo of the damaged seal</span></div><footer class=\"ds-product-footer\"><span>4 files</span><span>3 notes</span><button type=\"button\">Manage claim →</button></footer></div></article>",
+      "css": ".ds-product-card { overflow: hidden; border: 1px solid var(--color-rule); border-radius: 0; background: var(--color-sheet); color: var(--color-ink); font-family: var(--font-sans); box-shadow: 0 1px 0 rgba(23, 32, 51, 0.04); transition: transform 300ms ease-out, box-shadow 300ms ease-out; } .ds-product-card:hover { transform: translateY(-4px); box-shadow: 0 14px 34px rgba(23, 32, 51, 0.08), 0 2px 5px rgba(23, 32, 51, 0.05); } .ds-product-image { position: relative; aspect-ratio: 16 / 9; display: grid; place-items: center; border-bottom: 1px solid var(--color-rule); background: #e7e9e6; } .ds-product-mark { width: 48px; height: 48px; display: grid; place-items: center; border: 1px solid color-mix(in srgb, var(--color-ink) 25%, transparent); background: color-mix(in srgb, var(--color-sheet) 75%, transparent); } .ds-card-badge { position: absolute; top: 12px; left: 12px; min-height: 24px; display: inline-flex; align-items: center; padding: 2px 8px; border: 1px solid color-mix(in srgb, var(--color-green) 25%, transparent); background: var(--color-green-soft); color: var(--color-green); font-size: 0.66rem; font-weight: 700; letter-spacing: 0.045em; text-transform: uppercase; } .ds-product-body { padding: 16px; } .ds-product-brand { margin: 0; color: var(--color-muted); font-size: 0.75rem; font-weight: 700; letter-spacing: 0.055em; } .ds-product-name { margin: 4px 0 0; font-size: 1.12rem; line-height: 1.25; letter-spacing: -0.025em; } .ds-product-model { margin: 4px 0 0; color: var(--color-muted); font-size: 0.875rem; } .ds-product-dates { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 16px 0 0; padding: 12px 0; border-top: 1px solid var(--color-rule); border-bottom: 1px solid var(--color-rule); } .ds-product-dates dt { color: var(--color-muted); font-size: 0.68rem; font-weight: 700; letter-spacing: 0.055em; text-transform: uppercase; } .ds-product-dates dd { margin: 4px 0 0; font-size: 0.875rem; font-weight: 600; } .ds-product-claim { display: grid; gap: 4px; margin-top: 12px; padding: 12px; background: var(--color-orange-soft); color: #7e2f15; font-size: 0.875rem; } .ds-product-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-top: 16px; color: var(--color-muted); font-size: 0.75rem; font-weight: 600; } .ds-product-footer button { min-height: 32px; margin-left: auto; padding: 0 10px; border: 0; border-radius: 0; background: var(--color-ink); color: white; font: inherit; cursor: pointer; } .ds-product-footer button:hover { background: var(--color-orange); } .ds-product-footer button:focus-visible { outline: 3px solid color-mix(in srgb, var(--color-orange) 70%, white); outline-offset: 3px; }"
+    },
+    {
+      "name": "Attention Link",
+      "kind": "custom",
+      "description": "A concrete attention link that opens the relevant records rather than behaving like a detached metric tile.",
+      "html": "<a href=\"#open-claims\" class=\"ds-attention-route\"><span class=\"ds-attention-count\">2</span><span class=\"ds-attention-copy\"><span>OPEN CLAIMS</span><strong>Bosch needs evidence</strong></span><svg aria-hidden=\"true\" viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M5 12h14M13 6l6 6-6 6\"/></svg></a>",
+      "css": ".ds-attention-route { min-height: 80px; width: 100%; display: flex; align-items: center; gap: 16px; padding: 12px 20px; border: 0; border-right: 1px solid var(--color-rule); border-radius: 0; background: var(--color-sheet); color: var(--color-ink); font-family: var(--font-sans); text-align: left; text-decoration: none; cursor: pointer; transition: background-color 150ms cubic-bezier(0.4, 0, 0.2, 1); } .ds-attention-route:hover { background: var(--color-orange-soft); } .ds-attention-route:focus-visible { outline: 3px solid color-mix(in srgb, var(--color-orange) 70%, white); outline-offset: 3px; } .ds-attention-count { width: 44px; height: 44px; display: grid; flex: 0 0 auto; place-items: center; background: var(--color-orange); color: white; font-weight: 700; } .ds-attention-copy { min-width: 0; display: grid; gap: 4px; } .ds-attention-copy > span { color: #963714; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.055em; } .ds-attention-copy strong { font-size: 1rem; line-height: 1.25; } .ds-attention-route svg { margin-left: auto; flex: 0 0 auto; transition: transform 150ms ease-out; } .ds-attention-route:hover svg { transform: translateX(4px); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Household Dispatch Manifest",
+    "overview": "Domino treats household coverage as a living dispatch manifest: a compact, orderly record of what the household owns, what remains covered, and where action is required. Paper-white sheets, blue-black ink, thin routing rules, and restrained marketplace product imagery make the application feel dependable and immediately legible rather than ornamental.\n\nThe system is information-dense without becoming administrative theater. Familiar controls, square geometry, and explicit status language support the operating sequence of scan, attend, search, and act. Safety orange interrupts the ledger only for a true exception or decisive action. The system refuses generic metric-card dashboards and overt bounty-hunter cosplay; Domino's name contributes resolve, not costume.",
+    "keyCharacteristics": [
+      "Compact, card-led inventory ledgers with a clear scan path",
+      "Paper-white working sheets on a warm paper field",
+      "Blue-black ink and thin routing rules as the structural vocabulary",
+      "Safety orange reserved for exceptions, focus, and decisive actions",
+      "Square controls and containers, with circles limited to small state markers",
+      "Marketplace-like product imagery grounded by practical record detail"
+    ],
+    "rules": [
+      {
+        "name": "The Exception Ink Rule",
+        "body": "Safety orange is a routing signal, not ambient decoration; use it for urgent attention, current state, focus, or a decisive action.",
+        "section": "colors"
+      },
+      {
+        "name": "The Paired Status Rule",
+        "body": "Every semantic color is paired with plain-language status text and a distinct fill or border treatment; color never carries state alone.",
+        "section": "colors"
+      },
+      {
+        "name": "The Ledger Label Rule",
+        "body": "Uppercase, tracked labels identify fields and status routes; they never replace readable sentence-case body copy.",
+        "section": "typography"
+      },
+      {
+        "name": "The Weight Before Ornament Rule",
+        "body": "Establish hierarchy with size, weight, leading, and ink tone before introducing another font or decorative treatment.",
+        "section": "typography"
+      },
+      {
+        "name": "The Scan-Attend-Search-Act Rule",
+        "body": "Every operational surface should expose identity, present exceptions, support direct lookup, and keep the next meaningful action close to the affected record.",
+        "section": "layout"
+      },
+      {
+        "name": "The Flat Ledger Rule",
+        "body": "Surfaces remain flat at rest; elevation appears only when interaction or layering makes it informative.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Square Working Surface Rule",
+        "body": "Do not soften ordinary cards or controls with generic rounded corners; reserve the pill radius for small indicators and timeline nodes.",
+        "section": "shapes"
+      }
+    ],
+    "dos": [
+      "Do use Safety Orange only for an active exception, current step, keyboard focus, or decisive action.",
+      "Do keep ordinary working surfaces square, separated by one-pixel Routing Rules.",
+      "Do lead product records with a confirmed image or the implemented neutral fallback, then pair it with coverage and claim detail.",
+      "Do keep keyboard targets at least 44px high and preserve the global 3px focus outline.",
+      "Do collapse wide ledgers into a single readable column before reducing type or touch targets.",
+      "Do pair every semantic color with explicit status language."
+    ],
+    "donts": [
+      "Don't turn inventory and claim state into a generic grid of detached metric cards.",
+      "Don't spread Safety Orange across passive decoration or large ambient backgrounds.",
+      "Don't apply rounded dashboard cards, pill-shaped controls, or soft SaaS chrome to ordinary working surfaces.",
+      "Don't literalize the Domino name with bounty-hunter costumes, wanted-poster typography, or noir props.",
+      "Don't hide claim guidance, supporting documents, or the next action behind ambiguous icon-only controls.",
+      "Don't rely on hover, motion, or color alone to reveal critical state."
+    ]
+  }
+}

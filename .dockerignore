@@ -1,0 +1,13 @@
+.git
+.svelte-kit
+build
+node_modules
+target
+.env
+.env.*
+!.env.example
+.impeccable
+coverage
+data
+secrets
+*.log

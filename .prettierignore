@@ -1,0 +1,12 @@
+.agents/
+.impeccable/
+.svelte-kit/
+build/
+coverage/
+node_modules/
+target/
+drizzle/meta/
+drizzle/*.sql
+Cargo.lock
+Cargo.toml
+crates/

@@ -1,0 +1,2 @@
+ALTER TABLE "cli_device_codes" ADD COLUMN "service_actor_id" uuid;--> statement-breakpoint
+ALTER TABLE "cli_device_codes" ADD CONSTRAINT "cli_device_codes_service_actor_id_actors_id_fk" FOREIGN KEY ("service_actor_id") REFERENCES "public"."actors"("id") ON DELETE set null ON UPDATE no action;

@@ -1,0 +1,97 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: domino
+  namespace: domino
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: domino
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: domino
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: domino
+          image: ghcr.io/hankandre/domino:0.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: domino
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: domino
+                  key: database-url
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: uploads
+              mountPath: /data/uploads
+            - name: paperless-token
+              mountPath: /run/secrets/paperless
+              readOnly: true
+            - name: auth-secrets
+              mountPath: /run/secrets/auth
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          readinessProbe:
+            httpGet:
+              path: /api/ready
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+      volumes:
+        - name: uploads
+          persistentVolumeClaim:
+            claimName: domino-uploads
+        - name: paperless-token
+          secret:
+            secretName: domino
+            items:
+              - key: paperless-token
+                path: token
+        - name: auth-secrets
+          secret:
+            secretName: domino
+            items:
+              - key: oidc-client-secret
+                path: oidc-client-secret
+              - key: session-secret
+                path: session-secret
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi

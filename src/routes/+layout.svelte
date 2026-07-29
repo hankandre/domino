@@ -1,0 +1,178 @@
+<script lang="ts">
+  import "../app.css";
+  import {
+    Archive,
+    ClipboardCheck,
+    FileText,
+    LayoutGrid,
+    Menu,
+    Settings,
+    ShieldCheck,
+    Users,
+    X,
+  } from "lucide-svelte";
+  import { LogOut } from "lucide-svelte";
+  import { page } from "$app/state";
+
+  let { children, data } = $props();
+  let mobileNavOpen = $state(false);
+  let isAuthPage = $derived(
+    page.url.pathname === "/login" ||
+      page.url.pathname.startsWith("/invite/") ||
+      page.url.pathname.startsWith("/reset/"),
+  );
+
+  const nav = [
+    { href: "/", label: "Inventory", icon: LayoutGrid },
+    { href: "/claims", label: "Claims", icon: ClipboardCheck },
+    { href: "/documents", label: "Documents", icon: FileText },
+    { href: "/archive", label: "Archive", icon: Archive },
+  ];
+</script>
+
+<svelte:head>
+  <title>Domino · Household warranties</title>
+  <meta
+    name="description"
+    content="Track household warranties, documents, and claims without losing the thread."
+  />
+</svelte:head>
+
+{#if isAuthPage}
+  {@render children()}
+{:else}
+  <div class="min-h-screen lg:grid lg:grid-cols-[232px_minmax(0,1fr)]">
+    <aside
+      class="invisible fixed inset-y-0 left-0 z-50 flex w-[min(86vw,300px)] -translate-x-full flex-col border-r border-rule bg-ink text-white transition-transform duration-300 ease-out lg:visible lg:sticky lg:top-0 lg:h-screen lg:w-auto lg:translate-x-0"
+      class:translate-x-0={mobileNavOpen}
+      class:visible={mobileNavOpen}
+      aria-label="Primary navigation"
+    >
+      <div
+        class="flex h-20 items-center justify-between border-b border-white/12 px-5"
+      >
+        <a href="/" class="flex items-center gap-3" aria-label="Domino home">
+          <span
+            class="grid size-9 place-items-center border border-white/25 bg-white/8"
+          >
+            <ShieldCheck size={21} strokeWidth={1.8} />
+          </span>
+          <span>
+            <span class="block text-[1.2rem] font-bold tracking-[-0.03em]"
+              >Domino</span
+            >
+            <span
+              class="block text-[0.68rem] font-semibold tracking-[0.09em] text-white/55 uppercase"
+              >Home coverage</span
+            >
+          </span>
+        </a>
+        <button
+          class="grid size-10 place-items-center text-white/70 lg:hidden"
+          aria-label="Close navigation"
+          onclick={() => (mobileNavOpen = false)}
+        >
+          <X size={20} />
+        </button>
+      </div>
+
+      <nav class="flex-1 space-y-1 p-3">
+        {#each nav as item}
+          {@const Icon = item.icon}
+          <a
+            href={item.href}
+            class={`group flex min-h-11 items-center gap-3 px-3 text-sm font-semibold transition-colors ${
+              page.url.pathname === item.href ||
+              (item.href !== "/" &&
+                page.url.pathname.startsWith(`${item.href}/`))
+                ? "bg-white text-ink"
+                : "text-white/70 hover:bg-white/10 hover:text-white"
+            }`}
+          >
+            <Icon size={18} strokeWidth={1.8} />
+            <span>{item.label}</span>
+          </a>
+        {/each}
+      </nav>
+
+      <div class="space-y-1 border-t border-white/12 p-3">
+        {#if data.actor?.user}
+          <div class="mb-3 border-b border-white/12 px-3 pb-3">
+            <div class="truncate text-sm font-bold">
+              {data.actor.user.displayName}
+            </div>
+            <div class="mt-0.5 truncate text-xs text-white/50">
+              {data.actor.user.email}
+            </div>
+            {#if !data.demoMode}
+              <form method="POST" action="/auth/logout">
+                <button
+                  class="mt-2 flex min-h-9 items-center gap-2 text-xs font-bold text-white/65 hover:text-white"
+                >
+                  <LogOut size={15} /> Sign out
+                </button>
+              </form>
+            {/if}
+          </div>
+        {/if}
+        <a
+          href="/settings/access"
+          class="flex min-h-11 items-center gap-3 px-3 text-sm font-semibold text-white/68 hover:bg-white/8 hover:text-white"
+        >
+          <Users size={18} strokeWidth={1.8} /> Access
+        </a>
+        <a
+          href="/settings"
+          class="flex min-h-11 items-center gap-3 px-3 text-sm font-semibold text-white/68 hover:bg-white/8 hover:text-white"
+        >
+          <Settings size={18} strokeWidth={1.8} /> Settings
+        </a>
+        <div class="mt-3 border border-white/12 bg-white/5 p-3">
+          <div
+            class="text-[0.65rem] font-bold tracking-[0.08em] text-white/50 uppercase"
+          >
+            Document store
+          </div>
+          <div class="mt-2 flex items-center gap-2 text-xs font-semibold">
+            <span class="size-2 rounded-full bg-[#67d7a4]"></span>
+            {data.documentStore}
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    {#if mobileNavOpen}
+      <button
+        class="fixed inset-0 z-40 bg-ink/45 lg:hidden"
+        aria-label="Close navigation"
+        onclick={() => (mobileNavOpen = false)}
+      ></button>
+    {/if}
+
+    <div class="min-w-0">
+      <header
+        class="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-rule bg-paper/95 px-4 backdrop-blur-sm sm:px-6 lg:hidden"
+      >
+        <button
+          class="grid size-10 place-items-center border border-rule bg-sheet"
+          aria-label="Open navigation"
+          onclick={() => (mobileNavOpen = true)}
+        >
+          <Menu size={20} />
+        </button>
+        <a href="/" class="text-lg font-bold tracking-[-0.03em]">Domino</a>
+        <a
+          href="/products/new"
+          class="grid size-10 place-items-center bg-ink text-white"
+          aria-label="Add product"
+        >
+          <span class="text-2xl font-light">+</span>
+        </a>
+      </header>
+
+      <main class="min-h-screen">
+        {@render children()}
+      </main>
+    </div>
+  </div>
+{/if}

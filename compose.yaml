@@ -1,0 +1,185 @@
+name: domino
+
+x-domino-environment: &domino-environment
+  DATABASE_URL: postgres://domino:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/domino
+  DOMINO_DEMO_MODE: ${DOMINO_DEMO_MODE:-false}
+  ORIGIN: ${DOMINO_ORIGIN:-http://localhost:3000}
+  PAPERLESS_URL: ${PAPERLESS_URL:-}
+  PAPERLESS_TOKEN_FILE: ${PAPERLESS_TOKEN_FILE:-/run/secrets/paperless_token}
+  DOMINO_OIDC_ENABLED: ${DOMINO_OIDC_ENABLED:-false}
+  DOMINO_OIDC_PROVIDER_NAME: ${DOMINO_OIDC_PROVIDER_NAME:-Pocket ID}
+  DOMINO_OIDC_ISSUER: ${DOMINO_OIDC_ISSUER:-}
+  DOMINO_OIDC_CLIENT_ID: ${DOMINO_OIDC_CLIENT_ID:-}
+  DOMINO_OIDC_CLIENT_SECRET_FILE: /run/secrets/oidc_client_secret
+  DOMINO_SESSION_SECRET_FILE: /run/secrets/session_secret
+  DOMINO_OIDC_SCOPES: ${DOMINO_OIDC_SCOPES:-openid profile email groups}
+  DOMINO_OIDC_ALLOWED_GROUPS: ${DOMINO_OIDC_ALLOWED_GROUPS:-}
+  DOMINO_OIDC_REQUIRE_VERIFIED_EMAIL: ${DOMINO_OIDC_REQUIRE_VERIFIED_EMAIL:-true}
+  DOMINO_OIDC_AUTO_PROVISION: ${DOMINO_OIDC_AUTO_PROVISION:-true}
+  DOMINO_OIDC_LINK_EXISTING_BY_EMAIL: ${DOMINO_OIDC_LINK_EXISTING_BY_EMAIL:-false}
+  DOMINO_OIDC_DEFAULT_ROLE: ${DOMINO_OIDC_DEFAULT_ROLE:-Member}
+  DOMINO_OIDC_BOOTSTRAP_OWNER_EMAIL: ${DOMINO_OIDC_BOOTSTRAP_OWNER_EMAIL:-}
+  DOMINO_HOUSEHOLD_NAME: ${DOMINO_HOUSEHOLD_NAME:-Home}
+  DOMINO_HOUSEHOLD_SLUG: ${DOMINO_HOUSEHOLD_SLUG:-home}
+  DOMINO_SESSION_TTL_HOURS: ${DOMINO_SESSION_TTL_HOURS:-168}
+  DOMINO_DEVICE_FLOW_MAX_OUTSTANDING: ${DOMINO_DEVICE_FLOW_MAX_OUTSTANDING:-1000}
+  BODY_SIZE_LIMIT: 55M
+
+x-domino-security: &domino-security
+  user: "10001:10001"
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+
+services:
+  postgres:
+    image: docker.io/library/postgres:17-alpine
+    environment:
+      POSTGRES_DB: domino
+      POSTGRES_USER: domino
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U domino -d domino"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: .
+    image: domino:${DOMINO_IMAGE_TAG:-local}
+    <<: *domino-security
+    command:
+      [
+        "node_modules/drizzle-kit/bin.cjs",
+        "migrate",
+        "--config=drizzle.config.ts",
+      ]
+    environment: *domino-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  app:
+    build:
+      context: .
+    image: domino:${DOMINO_IMAGE_TAG:-local}
+    <<: *domino-security
+    environment: *domino-environment
+    ports:
+      - "${DOMINO_BIND_ADDRESS:-127.0.0.1}:${DOMINO_PORT:-3000}:3000"
+    volumes:
+      - domino-uploads:/data/uploads
+    secrets:
+      - paperless_token
+      - oidc_client_secret
+      - session_secret
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/api/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Human-operated CLI. Start the browser application normally, then run:
+  # docker compose --profile tools run --rm cli auth login --name "My laptop" --no-open
+  cli:
+    profiles: ["tools"]
+    build:
+      context: .
+      dockerfile: Dockerfile.cli
+    image: domino-cli:${DOMINO_CLI_IMAGE_TAG:-local}
+    <<: *domino-security
+    environment:
+      DOMINO_SERVER: http://app:3000
+    volumes:
+      - domino-cli-config:/home/domino/.config/domino
+    depends_on:
+      app:
+        condition: service_healthy
+    stdin_open: true
+    tty: true
+
+  # The broker owns the Hermes credential. Authenticate this volume with the
+  # broker-auth helper, then expose only domino-broker-socket to the agent.
+  broker-auth:
+    profiles: ["broker"]
+    build:
+      context: .
+      dockerfile: Dockerfile.cli
+    image: domino-cli:${DOMINO_CLI_IMAGE_TAG:-local}
+    <<: *domino-security
+    environment:
+      DOMINO_SERVER: http://app:3000
+    volumes:
+      - domino-broker-config:/home/domino/.config/domino
+    depends_on:
+      app:
+        condition: service_healthy
+    stdin_open: true
+    tty: true
+
+  broker:
+    profiles: ["broker"]
+    build:
+      context: .
+      dockerfile: Dockerfile.cli
+    image: domino-cli:${DOMINO_CLI_IMAGE_TAG:-local}
+    <<: *domino-security
+    command: ["broker", "serve"]
+    volumes:
+      - domino-broker-config:/home/domino/.config/domino:ro
+      - domino-broker-socket:/run/domino
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # This client has the broker socket but deliberately has no credential volume.
+  agent-cli:
+    profiles: ["broker"]
+    build:
+      context: .
+      dockerfile: Dockerfile.cli
+    image: domino-cli:${DOMINO_CLI_IMAGE_TAG:-local}
+    <<: *domino-security
+    environment:
+      DOMINO_BROKER_SOCKET: /run/domino/broker.sock
+    volumes:
+      - domino-broker-socket:/run/domino
+    depends_on:
+      - broker
+
+volumes:
+  postgres-data:
+  domino-uploads:
+  domino-cli-config:
+  domino-broker-config:
+  domino-broker-socket:
+
+secrets:
+  paperless_token:
+    file: ${PAPERLESS_TOKEN_PATH:-./secrets/paperless_token}
+  oidc_client_secret:
+    file: ${DOMINO_OIDC_CLIENT_SECRET_PATH:-./secrets/oidc_client_secret}
+  session_secret:
+    file: ${DOMINO_SESSION_SECRET_PATH:-./secrets/session_secret}

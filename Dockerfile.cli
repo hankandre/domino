@@ -1,0 +1,26 @@
+# syntax=docker/dockerfile:1.7
+FROM docker.io/library/rust:1.95-alpine AS build
+
+RUN apk add --no-cache musl-dev
+WORKDIR /src
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+RUN cargo build --locked --release -p domino-cli
+
+FROM docker.io/library/alpine:3.23 AS runtime
+
+RUN apk add --no-cache ca-certificates \
+  && addgroup -S -g 10001 domino \
+  && adduser -S -D -h /home/domino -u 10001 -G domino domino \
+  && mkdir -p /home/domino/.config/domino /run/domino \
+  && chown -R 10001:10001 /home/domino /run/domino
+
+ENV HOME=/home/domino \
+    XDG_CONFIG_HOME=/home/domino/.config \
+    XDG_RUNTIME_DIR=/run
+
+COPY --from=build --chown=10001:10001 /src/target/release/domino /usr/local/bin/domino
+
+USER 10001:10001
+ENTRYPOINT ["/usr/local/bin/domino"]
+CMD ["--help"]

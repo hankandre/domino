@@ -1,0 +1,78 @@
+@import "tailwindcss";
+
+@theme {
+  --color-paper: #f5f3ed;
+  --color-sheet: #fffefa;
+  --color-ink: #172033;
+  --color-muted: #687184;
+  --color-rule: #d8d9d3;
+  --color-orange: #e65322;
+  --color-orange-soft: #fff0e8;
+  --color-blue-soft: #eaf0f7;
+  --color-green: #176b4d;
+  --color-green-soft: #e7f3ed;
+  --color-red: #a3332b;
+  --color-red-soft: #fae9e7;
+  --font-sans: "Arial Nova", "Aptos", "Helvetica Neue", Arial, sans-serif;
+  --shadow-sheet:
+    0 14px 34px rgba(23, 32, 51, 0.08), 0 2px 5px rgba(23, 32, 51, 0.05);
+}
+
+:root {
+  font-family: var(--font-sans);
+  color: var(--color-ink);
+  background: var(--color-paper);
+  font-synthesis: none;
+}
+
+html {
+  min-width: 320px;
+  background: var(--color-paper);
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background:
+    linear-gradient(
+        90deg,
+        transparent calc(100% - 1px),
+        rgba(23, 32, 51, 0.025) 0
+      )
+      0 0 / 24px 100%,
+    var(--color-paper);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--color-orange) 70%, white);
+  outline-offset: 3px;
+}
+
+::selection {
+  background: var(--color-orange);
+  color: white;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
