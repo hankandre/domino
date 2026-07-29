@@ -1,14 +1,16 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: domino-migrate
+  name: domino-migrate-0-1-1
   namespace: domino
 spec:
   backoffLimit: 3
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: domino-migrate
+        app.kubernetes.io/name: domino
+        app.kubernetes.io/part-of: domino
+        app.kubernetes.io/component: migration
     spec:
       restartPolicy: OnFailure
       automountServiceAccountToken: false
@@ -16,15 +18,13 @@ spec:
         runAsNonRoot: true
         runAsUser: 10001
         runAsGroup: 10001
+        fsGroup: 10001
         seccompProfile:
           type: RuntimeDefault
       containers:
         - name: migrate
-          image: ghcr.io/hankandre/domino:0.1.0
-          args:
-            - node_modules/drizzle-kit/bin.cjs
-            - migrate
-            - --config=drizzle.config.ts
+          image: ghcr.io/hankandre/domino-migrate:0.1.1
+          imagePullPolicy: Always
           env:
             - name: DATABASE_URL
               valueFrom:
@@ -40,6 +40,13 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
       volumes:
         - name: tmp
           emptyDir:

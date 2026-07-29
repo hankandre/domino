@@ -3,6 +3,7 @@ import { access } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { Hono, type MiddlewareHandler } from "hono";
 import { zValidator } from "@hono/zod-validator";
+import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import {
   and,
@@ -87,15 +88,26 @@ type Variables = {
 };
 type Env = { Variables: Variables };
 
+export const httpUrl = z
+  .string()
+  .max(2_048)
+  .refine((value) => {
+    try {
+      return ["http:", "https:"].includes(new URL(value).protocol);
+    } catch {
+      return false;
+    }
+  }, "Use an HTTP or HTTPS URL.");
+
 const productInput = z.object({
   name: z.string().min(1).max(180),
   brand: z.string().max(100).optional(),
   model: z.string().max(120).optional(),
-  serialNumbers: z.array(z.string().max(180)).default([]),
+  serialNumbers: z.array(z.string().max(180)).max(20).default([]),
   retailer: z.string().max(120).optional(),
   orderNumber: z.string().max(180).optional(),
   category: z.string().max(120).optional(),
-  productUrl: z.url().nullable().optional(),
+  productUrl: httpUrl.nullable().optional(),
   purchaseDate: z.iso.date().nullable().optional(),
   purchasePriceMinor: z.number().int().nonnegative().optional(),
   currency: z.string().length(3).optional(),
@@ -108,7 +120,7 @@ const productInput = z.object({
       endsAt: z.iso.date().nullable().optional(),
       lifetime: z.boolean().optional(),
       terms: z.string().max(20_000).optional(),
-      claimUrl: z.url().nullable().optional(),
+      claimUrl: httpUrl.nullable().optional(),
       claimPhone: z.string().max(80).nullable().optional(),
       claimEmail: z.email().nullable().optional(),
       eligibilityNotes: z.string().max(20_000).nullable().optional(),
@@ -148,7 +160,7 @@ const warrantyInput = z.object({
   endsAt: z.iso.date().nullable().optional(),
   lifetime: z.boolean().default(false),
   terms: z.string().max(20_000).optional(),
-  claimUrl: z.url().nullable().optional(),
+  claimUrl: httpUrl.nullable().optional(),
   claimPhone: z.string().max(80).nullable().optional(),
   claimEmail: z.email().nullable().optional(),
   eligibilityNotes: z.string().max(20_000).nullable().optional(),
@@ -200,6 +212,10 @@ const documentUploadInput = z.object({
 });
 
 const app = new Hono<Env>().basePath("/api");
+const smallJsonBody = bodyLimit({
+  maxSize: 8 * 1024,
+  onError: (c) => c.json({ error: "Request body is too large" }, 413),
+});
 const deviceCodes = new Map<
   string,
   {
@@ -209,7 +225,19 @@ const deviceCodes = new Map<
     token?: string;
   }
 >();
-const issuedTokens = new Map<string, Variables["actor"]>();
+const issuedTokens = new Map<
+  string,
+  { actor: Variables["actor"]; expiresAt: number }
+>();
+
+function pruneDemoCredentials(now = Date.now()) {
+  for (const [hash, value] of deviceCodes) {
+    if (value.expiresAt <= now) deviceCodes.delete(hash);
+  }
+  for (const [hash, value] of issuedTokens) {
+    if (value.expiresAt <= now) issuedTokens.delete(hash);
+  }
+}
 
 async function authenticateApiCredential(
   tokenHash: string,
@@ -303,9 +331,10 @@ app.use("/v1/*", async (c, next) => {
   const token = authorization.slice(7);
   if (token.length < 24) return c.json({ error: "Invalid credential" }, 401);
   const tokenHash = createHash("sha256").update(token).digest("hex");
+  pruneDemoCredentials();
   const issuedActor = issuedTokens.get(tokenHash);
   if (issuedActor) {
-    c.set("actor", issuedActor);
+    c.set("actor", issuedActor.actor);
     return next();
   }
 
@@ -315,18 +344,6 @@ app.use("/v1/*", async (c, next) => {
       c.set("actor", persistedActor);
       return next();
     }
-  }
-
-  // Database credential lookup is intentionally centralized here. Until the first
-  // migration has run, a configured bootstrap token can initialize the household.
-  if (process.env.DOMINO_BOOTSTRAP_TOKEN_HASH === tokenHash) {
-    c.set("actor", {
-      id: "bootstrap",
-      householdId: process.env.DOMINO_BOOTSTRAP_HOUSEHOLD_ID ?? "bootstrap",
-      kind: "service",
-      permissions: ["*"],
-    });
-    return next();
   }
 
   return c.json({ error: "Credential is unknown or revoked" }, 401);
@@ -428,11 +445,11 @@ const routes = app
             : "not-configured",
       });
     } catch (cause) {
+      console.error("Readiness check failed", cause);
       return c.json(
         {
           ok: false,
-          error:
-            cause instanceof Error ? cause.message : "Readiness check failed.",
+          error: "A required dependency is unavailable.",
         },
         503,
       );
@@ -440,11 +457,12 @@ const routes = app
   })
   .post(
     "/device/start",
+    smallJsonBody,
     zValidator(
       "json",
       z.object({
         name: z.string().min(1).max(100),
-        serverOrigin: z.url().optional(),
+        serverOrigin: z.string().max(2_048).url().optional(),
       }),
     ),
     async (c) => {
@@ -455,6 +473,13 @@ const routes = app
         .digest("hex");
       const expiresAt = Date.now() + 10 * 60_000;
       if (process.env.DOMINO_DEMO_MODE === "true") {
+        pruneDemoCredentials();
+        if (deviceCodes.size >= 1_000) {
+          return c.json(
+            { error: "Too many device authorization requests are pending." },
+            429,
+          );
+        }
         deviceCodes.set(deviceCodeHash, {
           userCode,
           requestedName: c.req.valid("json").name,
@@ -513,11 +538,15 @@ const routes = app
   )
   .post(
     "/device/approve",
+    smallJsonBody,
     zValidator(
       "json",
       z.object({
         userCode: z.string().min(4).max(20),
-        permissions: z.array(z.enum(permissions)).optional(),
+        permissions: z
+          .array(z.enum(permissions))
+          .max(permissions.length)
+          .optional(),
       }),
     ),
     async (c) => {
@@ -658,17 +687,21 @@ const routes = app
       entry[1].token = token;
       const tokenHash = createHash("sha256").update(token).digest("hex");
       issuedTokens.set(tokenHash, {
-        id: `device-${entry[1].requestedName.toLowerCase().replaceAll(/\s+/g, "-")}`,
-        householdId: approvingActor.householdId,
-        kind: "service",
-        permissions: requestedPermissions,
+        actor: {
+          id: `device-${entry[1].requestedName.toLowerCase().replaceAll(/\s+/g, "-")}`,
+          householdId: approvingActor.householdId,
+          kind: "service",
+          permissions: requestedPermissions,
+        },
+        expiresAt: Date.now() + 60 * 60_000,
       });
       return c.json({ approved: true, name: entry[1].requestedName });
     },
   )
   .post(
     "/device/token",
-    zValidator("json", z.object({ deviceCode: z.string().min(24) })),
+    smallJsonBody,
+    zValidator("json", z.object({ deviceCode: z.string().min(24).max(256) })),
     async (c) => {
       const hash = createHash("sha256")
         .update(c.req.valid("json").deviceCode)
@@ -1106,8 +1139,14 @@ const routes = app
   .post(
     "/v1/image-suggestions",
     requirePermission("warranties:write"),
-    zValidator("json", z.object({ productUrl: z.url() })),
+    zValidator("json", z.object({ productUrl: httpUrl })),
     async (c) => {
+      if (process.env.DOMINO_DEMO_MODE === "true") {
+        return c.json(
+          { error: "Outbound image discovery is disabled in demo mode." },
+          403,
+        );
+      }
       try {
         const suggestions = await suggestProductImage(
           c.req.valid("json").productUrl,
@@ -1130,7 +1169,7 @@ const routes = app
     "/v1/products/:id/images/from-url",
     requirePermission("warranties:write"),
     zValidator("param", idParamInput),
-    zValidator("json", z.object({ imageUrl: z.url() })),
+    zValidator("json", z.object({ imageUrl: httpUrl })),
     async (c) => {
       const { id } = c.req.valid("param");
       if (process.env.DOMINO_DEMO_MODE === "true") {
@@ -1363,7 +1402,7 @@ const routes = app
   )
   .post(
     "/v1/documents/:id/refresh",
-    requirePermission("documents:read"),
+    requirePermission("paperless:discover"),
     zValidator("param", idParamInput),
     async (c) => {
       const { id } = c.req.valid("param");

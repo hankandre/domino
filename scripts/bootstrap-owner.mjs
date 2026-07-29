@@ -32,6 +32,7 @@ const ownerPermissions = [
   "claims:manage",
   "documents:read",
   "documents:attach",
+  "paperless:discover",
   "notes:read",
   "notes:write",
   "household:manage",

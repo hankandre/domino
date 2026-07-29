@@ -7,9 +7,11 @@ import { requireDb } from "$lib/server/db";
 import {
   actorRoles,
   actors,
+  apiCredentials,
   auditEvents,
   roles,
   users,
+  webSessions,
 } from "$lib/server/db/schema";
 import { permissions } from "$lib/server/auth/permissions";
 
@@ -137,6 +139,17 @@ export const actions: Actions = {
         )
         .returning({ id: actors.id, name: actors.name });
       if (!account) return null;
+      if (disabled) {
+        const revokedAt = new Date();
+        await tx
+          .update(webSessions)
+          .set({ revokedAt })
+          .where(eq(webSessions.actorId, account.id));
+        await tx
+          .update(apiCredentials)
+          .set({ revokedAt, updatedAt: revokedAt })
+          .where(eq(apiCredentials.actorId, account.id));
+      }
       await tx.insert(auditEvents).values({
         householdId: locals.actor!.householdId,
         actorId: locals.actor!.id,

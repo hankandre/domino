@@ -12,6 +12,8 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: domino
+        app.kubernetes.io/part-of: domino
+        app.kubernetes.io/component: application
     spec:
       automountServiceAccountToken: false
       securityContext:
@@ -23,8 +25,8 @@ spec:
           type: RuntimeDefault
       containers:
         - name: domino
-          image: ghcr.io/hankandre/domino:0.1.0
-          imagePullPolicy: IfNotPresent
+          image: ghcr.io/hankandre/domino:0.1.1
+          imagePullPolicy: Always
           ports:
             - name: http
               containerPort: 3000
@@ -80,12 +82,14 @@ spec:
         - name: paperless-token
           secret:
             secretName: domino
+            defaultMode: 0440
             items:
               - key: paperless-token
                 path: token
         - name: auth-secrets
           secret:
             secretName: domino
+            defaultMode: 0440
             items:
               - key: oidc-client-secret
                 path: oidc-client-secret

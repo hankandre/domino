@@ -1,22 +1,30 @@
 use clap::{Args, Parser, Subcommand};
-use reqwest::{Client, Method, Url, multipart};
+use reqwest::{Client, Method, Url, multipart, redirect::Policy};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     env,
-    fs::Permissions,
+    fs::{DirBuilder, Permissions},
+    os::unix::fs::DirBuilderExt,
     os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     process::Stdio,
-    time::{Duration, Instant},
+    sync::Arc,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tokio::{
     fs,
     io::{AsyncReadExt, AsyncWriteExt},
     net::{UnixListener, UnixStream},
+    sync::Semaphore,
+    time::timeout,
 };
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
+const MAX_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
+const MAX_UPLOAD_BYTES: u64 = 50 * 1024 * 1024;
+const BROKER_MAX_CONNECTIONS: usize = 32;
+const BROKER_HEADER_BYTES: usize = 16 * 1024;
 
 #[derive(Parser)]
 #[command(
@@ -326,11 +334,71 @@ fn default_socket() -> PathBuf {
 }
 
 fn origin(value: &str) -> Result<String> {
+    origin_with_policy(
+        value,
+        env::var("DOMINO_ALLOW_INSECURE_HTTP").as_deref() == Ok("true"),
+    )
+}
+
+fn origin_with_policy(value: &str, allow_insecure_http: bool) -> Result<String> {
     let url = Url::parse(value)?;
     if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
         return Err("server must be an HTTP(S) origin".into());
     }
+    if url.scheme() == "http"
+        && !url.host_str().is_some_and(is_loopback_host)
+        && !allow_insecure_http
+    {
+        return Err(
+            "remote Domino servers must use HTTPS (set DOMINO_ALLOW_INSECURE_HTTP=true only for a trusted internal network)"
+                .into(),
+        );
+    }
     Ok(url.origin().ascii_serialization())
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    host.eq_ignore_ascii_case("localhost")
+        || host == "127.0.0.1"
+        || host == "::1"
+        || host.starts_with("127.")
+}
+
+fn hardened_client() -> Result<Client> {
+    Ok(Client::builder()
+        .redirect(Policy::none())
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(30))
+        .build()?)
+}
+
+fn prepare_private_directory(path: &Path, maximum_mode: u32) -> Result<()> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if !metadata.is_dir() {
+                return Err(format!("{} must be a directory.", path.display()).into());
+            }
+            let effective_uid = unsafe { libc::geteuid() };
+            if effective_uid != 0 && metadata.uid() != effective_uid {
+                return Err(format!(
+                    "{} is not owned by the current OS identity.",
+                    path.display()
+                )
+                .into());
+            }
+            if metadata.permissions().mode() & !maximum_mode & 0o777 != 0 {
+                return Err(format!("{} has unsafe permissions.", path.display()).into());
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            DirBuilder::new()
+                .recursive(true)
+                .mode(maximum_mode)
+                .create(path)?;
+        }
+        Err(error) => return Err(error.into()),
+    }
+    Ok(())
 }
 
 async fn load_session(path: &Path) -> Result<Session> {
@@ -375,23 +443,40 @@ async fn load_session(path: &Path) -> Result<Session> {
 }
 
 async fn save_session(path: &Path, session: &Session) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).await?;
-        fs::set_permissions(parent, Permissions::from_mode(0o700)).await?;
+    let parent = path
+        .parent()
+        .ok_or("Credential path requires a parent directory")?;
+    prepare_private_directory(parent, 0o700)?;
+    if let Ok(metadata) = std::fs::symlink_metadata(path) {
+        let effective_uid = unsafe { libc::geteuid() };
+        if !metadata.is_file()
+            || metadata.permissions().mode() & 0o077 != 0
+            || (effective_uid != 0 && metadata.uid() != effective_uid)
+        {
+            return Err(
+                format!("Refusing to replace unsafe credential {}.", path.display()).into(),
+            );
+        }
     }
     let bytes = serde_json::to_vec_pretty(session)?;
+    let temporary = parent.join(format!(
+        ".session-{}-{}.tmp",
+        std::process::id(),
+        SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+    ));
     let mut options = std::fs::OpenOptions::new();
     options
-        .create(true)
-        .truncate(true)
+        .create_new(true)
         .write(true)
         .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW);
-    let mut file = tokio::fs::File::from_std(options.open(path)?);
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    let mut file = tokio::fs::File::from_std(options.open(&temporary)?);
     file.write_all(&bytes).await?;
     file.write_all(b"\n").await?;
     file.sync_all().await?;
-    fs::set_permissions(path, Permissions::from_mode(0o600)).await?;
+    drop(file);
+    fs::rename(&temporary, path).await?;
+    std::fs::File::open(parent)?.sync_all()?;
     Ok(())
 }
 
@@ -402,8 +487,9 @@ async fn direct_request(
     path: &str,
     body: Option<Value>,
 ) -> Result<Value> {
+    let session_server = origin(&session.server)?;
     if let Some(requested) = requested_server
-        && origin(requested)? != origin(&session.server)?
+        && origin(requested)? != session_server
     {
         return Err(format!(
             "This credential is pinned to {}. Authenticate again for {}.",
@@ -411,8 +497,8 @@ async fn direct_request(
         )
         .into());
     }
-    let mut request = Client::new()
-        .request(method, Url::parse(&session.server)?.join(path)?)
+    let mut request = hardened_client()?
+        .request(method, Url::parse(&session_server)?.join(path)?)
         .bearer_auth(&session.access_token)
         .header("accept", "application/json");
     if let Some(value) = body {
@@ -424,7 +510,20 @@ async fn direct_request(
 
 async fn response_value(response: reqwest::Response) -> Result<Value> {
     let status = response.status();
-    let bytes = response.bytes().await?;
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_RESPONSE_BYTES as u64)
+    {
+        return Err("Domino response exceeded 10 MiB.".into());
+    }
+    let mut response = response;
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        if bytes.len() + chunk.len() > MAX_RESPONSE_BYTES {
+            return Err("Domino response exceeded 10 MiB.".into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
     let value = serde_json::from_slice(&bytes)
         .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into_owned()));
     if !status.is_success() {
@@ -554,7 +653,8 @@ async fn run_auth(cli: &Cli, command: &AuthCommand) -> Result<()> {
     match command {
         AuthCommand::Login { name, no_open } => {
             let server = origin(cli.server.as_deref().unwrap_or("http://127.0.0.1:3000"))?;
-            let response = Client::new()
+            let client = hardened_client()?;
+            let response = client
                 .post(Url::parse(&server)?.join("/api/device/start")?)
                 .json(&json!({ "name": name }))
                 .send()
@@ -565,10 +665,11 @@ async fn run_auth(cli: &Cli, command: &AuthCommand) -> Result<()> {
             if !no_open {
                 open_browser(&flow.verification_uri);
             }
-            let deadline = Instant::now() + Duration::from_secs(flow.expires_in);
+            let deadline = Instant::now() + Duration::from_secs(flow.expires_in.clamp(30, 15 * 60));
+            let polling_interval = Duration::from_secs(flow.interval.clamp(1, 10));
             while Instant::now() < deadline {
-                tokio::time::sleep(Duration::from_secs(flow.interval.max(1))).await;
-                let response = Client::new()
+                tokio::time::sleep(polling_interval).await;
+                let response = client
                     .post(Url::parse(&server)?.join("/api/device/token")?)
                     .json(&json!({ "deviceCode": flow.device_code }))
                     .send()
@@ -862,10 +963,15 @@ async fn run_document(cli: &Cli, command: &DocumentCommand) -> Result<Value> {
                 return Err("Document upload is not exposed through the JSON broker. Link an existing Paperless document or use direct mode.".into());
             }
             let session = load_session(&cli.credential_file).await?;
+            let session_server = origin(&session.server)?;
             if let Some(requested) = cli.server.as_deref()
-                && origin(requested)? != origin(&session.server)?
+                && origin(requested)? != session_server
             {
                 return Err("Credential/server origin mismatch.".into());
+            }
+            let metadata = fs::metadata(path).await?;
+            if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_UPLOAD_BYTES {
+                return Err("Attachments must be regular files between 1 byte and 50 MiB.".into());
             }
             let bytes = fs::read(path).await?;
             let file_name = path
@@ -885,8 +991,8 @@ async fn run_document(cli: &Cli, command: &DocumentCommand) -> Result<Value> {
             if let Some(value) = backend {
                 form = form.text("backend", value.clone());
             }
-            let response = Client::new()
-                .post(Url::parse(&session.server)?.join("/api/v1/documents")?)
+            let response = hardened_client()?
+                .post(Url::parse(&session_server)?.join("/api/v1/documents")?)
                 .bearer_auth(&session.access_token)
                 .multipart(form)
                 .send()
@@ -936,7 +1042,17 @@ async fn socket_request(
     stream.write_all(request.as_bytes()).await?;
     stream.write_all(&payload).await?;
     let mut response = Vec::new();
-    stream.read_to_end(&mut response).await?;
+    timeout(
+        Duration::from_secs(35),
+        stream
+            .take((MAX_RESPONSE_BYTES + BROKER_HEADER_BYTES + 1) as u64)
+            .read_to_end(&mut response),
+    )
+    .await
+    .map_err(|_| "Timed out waiting for the broker response")??;
+    if response.len() > MAX_RESPONSE_BYTES + BROKER_HEADER_BYTES {
+        return Err("Broker response exceeded 10 MiB.".into());
+    }
     let split = response
         .windows(4)
         .position(|window| window == b"\r\n\r\n")
@@ -964,10 +1080,10 @@ async fn run_broker(cli: &Cli, command: &BrokerCommand) -> Result<()> {
         } => {
             let session =
                 load_session(credential_file.as_deref().unwrap_or(&cli.credential_file)).await?;
-            if let Some(parent) = listen.parent() {
-                fs::create_dir_all(parent).await?;
-                fs::set_permissions(parent, Permissions::from_mode(0o750)).await?;
-            }
+            let parent = listen
+                .parent()
+                .ok_or("Broker socket requires a parent directory")?;
+            prepare_private_directory(parent, 0o750)?;
             if let Ok(metadata) = fs::symlink_metadata(listen).await {
                 if !metadata.file_type().is_socket() {
                     return Err(format!(
@@ -985,13 +1101,19 @@ async fn run_broker(cli: &Cli, command: &BrokerCommand) -> Result<()> {
                 listen.display()
             );
             println!("The bearer credential will never be returned through this socket.");
+            let connections = Arc::new(Semaphore::new(BROKER_MAX_CONNECTIONS));
             loop {
                 tokio::select! {
                     accepted = listener.accept() => {
-                        let (stream, _) = accepted?;
+                        let (mut stream, _) = accepted?;
+                        let Ok(permit) = connections.clone().try_acquire_owned() else {
+                            let _ = write_broker_error(&mut stream, 503, "Broker is busy").await;
+                            continue;
+                        };
                         let server = session.server.clone();
                         let token = session.access_token.clone();
                         tokio::spawn(async move {
+                            let _permit = permit;
                             let _ = serve_broker_request(stream, &server, &token).await;
                         });
                     }
@@ -1009,13 +1131,15 @@ async fn serve_broker_request(mut stream: UnixStream, server: &str, token: &str)
     let mut chunk = [0u8; 8192];
     let header_end;
     loop {
-        let count = stream.read(&mut chunk).await?;
+        let count = timeout(Duration::from_secs(5), stream.read(&mut chunk))
+            .await
+            .map_err(|_| "Timed out reading broker request headers")??;
         if count == 0 {
             return Ok(());
         }
         bytes.extend_from_slice(&chunk[..count]);
-        if bytes.len() > 1_100_000 {
-            return write_broker_error(&mut stream, 413, "Request too large").await;
+        if bytes.len() > BROKER_HEADER_BYTES {
+            return write_broker_error(&mut stream, 431, "Request headers too large").await;
         }
         if let Some(index) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
             header_end = index + 4;
@@ -1028,7 +1152,18 @@ async fn serve_broker_request(mut stream: UnixStream, server: &str, token: &str)
     let mut request_parts = request_line.split_whitespace();
     let method = request_parts.next().ok_or("Missing method")?.to_owned();
     let path = request_parts.next().ok_or("Missing path")?.to_owned();
-    if !path.starts_with("/api/v1/") {
+    let upstream = match broker_upstream_url(server, &path) {
+        Ok(url) => url,
+        Err(_) => {
+            return write_broker_error(
+                &mut stream,
+                403,
+                "The broker only exposes normalized authenticated v1 API operations",
+            )
+            .await;
+        }
+    };
+    if !upstream.path().starts_with("/api/v1/") {
         return write_broker_error(
             &mut stream,
             403,
@@ -1048,34 +1183,34 @@ async fn serve_broker_request(mut stream: UnixStream, server: &str, token: &str)
         return write_broker_error(&mut stream, 413, "Request too large").await;
     }
     while bytes.len() < header_end + content_length {
-        let count = stream.read(&mut chunk).await?;
+        let count = timeout(Duration::from_secs(10), stream.read(&mut chunk))
+            .await
+            .map_err(|_| "Timed out reading broker request body")??;
         if count == 0 {
             break;
         }
         bytes.extend_from_slice(&chunk[..count]);
     }
-    let mut response = Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()?
-        .request(
-            Method::from_bytes(method.as_bytes())?,
-            Url::parse(server)?.join(&path)?,
-        )
+    if bytes.len() < header_end + content_length {
+        return write_broker_error(&mut stream, 400, "Incomplete request body").await;
+    }
+    let mut response = hardened_client()?
+        .request(Method::from_bytes(method.as_bytes())?, upstream)
         .bearer_auth(token)
         .header("content-type", "application/json")
-        .body(bytes[header_end..].to_vec())
+        .body(bytes[header_end..header_end + content_length].to_vec())
         .send()
         .await?;
     let status = response.status();
     if response
         .content_length()
-        .is_some_and(|length| length > 10 * 1024 * 1024)
+        .is_some_and(|length| length > MAX_RESPONSE_BYTES as u64)
     {
         return write_broker_error(&mut stream, 502, "Upstream response too large").await;
     }
     let mut body = Vec::new();
     while let Some(chunk) = response.chunk().await? {
-        if body.len() + chunk.len() > 10 * 1024 * 1024 {
+        if body.len() + chunk.len() > MAX_RESPONSE_BYTES {
             return write_broker_error(&mut stream, 502, "Upstream response too large").await;
         }
         body.extend_from_slice(&chunk);
@@ -1090,6 +1225,24 @@ async fn serve_broker_request(mut stream: UnixStream, server: &str, token: &str)
     stream.write_all(header.as_bytes()).await?;
     stream.write_all(&body).await?;
     Ok(())
+}
+
+fn broker_upstream_url(server: &str, path: &str) -> Result<Url> {
+    let lower = path.to_ascii_lowercase();
+    if !path.starts_with("/api/v1/")
+        || lower.contains("%2e")
+        || lower.contains("%2f")
+        || lower.contains("%5c")
+        || path.split('/').any(|segment| matches!(segment, "." | ".."))
+    {
+        return Err("The broker only exposes normalized v1 API paths.".into());
+    }
+    let base = Url::parse(&origin(server)?)?;
+    let target = base.join(path)?;
+    if target.origin() != base.origin() || !target.path().starts_with("/api/v1/") {
+        return Err("The broker only exposes same-origin v1 API paths.".into());
+    }
+    Ok(target)
 }
 
 async fn write_broker_error(stream: &mut UnixStream, status: u16, message: &str) -> Result<()> {
@@ -1107,7 +1260,6 @@ async fn write_broker_error(stream: &mut UnixStream, status: u16, message: &str)
 mod tests {
     use super::*;
     use std::os::unix::fs::{PermissionsExt, symlink};
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn origin_discards_paths_and_normalizes_default_ports() {
@@ -1115,6 +1267,31 @@ mod tests {
             origin("https://domino.example.test:443/some/path").unwrap(),
             "https://domino.example.test"
         );
+    }
+
+    #[test]
+    fn origin_rejects_remote_plaintext_http_by_default() {
+        assert!(origin_with_policy("http://domino.example.test", false).is_err());
+        assert!(origin_with_policy("http://127.0.0.1:3000", false).is_ok());
+    }
+
+    #[test]
+    fn broker_rejects_path_traversal_before_forwarding_credentials() {
+        assert!(
+            broker_upstream_url(
+                "https://domino.example.test",
+                "/api/v1/../../api/device/token"
+            )
+            .is_err()
+        );
+        assert!(
+            broker_upstream_url(
+                "https://domino.example.test",
+                "/api/v1/%2e%2e/%2e%2e/api/device/token"
+            )
+            .is_err()
+        );
+        assert!(broker_upstream_url("https://domino.example.test", "/api/v1/products").is_ok());
     }
 
     #[test]

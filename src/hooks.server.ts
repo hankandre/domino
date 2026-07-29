@@ -26,7 +26,11 @@ export const handle: Handle = async ({ event, resolve }) => {
         displayName: "Demo owner",
       },
     };
-    return resolve(event);
+    const response = await resolve(event, {
+      filterSerializedResponseHeaders: (name) =>
+        name === "content-type" || name === "content-length",
+    });
+    return applySecurityHeaders(response);
   }
 
   const sessionToken = event.cookies.get(sessionCookieName);
@@ -50,5 +54,23 @@ export const handle: Handle = async ({ event, resolve }) => {
     throw redirect(303, `/login?returnTo=${encodeURIComponent(returnTo)}`);
   }
 
-  return resolve(event);
+  return applySecurityHeaders(await resolve(event));
 };
+
+function applySecurityHeaders(response: Response) {
+  if (!response.headers.has("X-Content-Type-Options"))
+    response.headers.set("X-Content-Type-Options", "nosniff");
+  if (!response.headers.has("Referrer-Policy"))
+    response.headers.set("Referrer-Policy", "same-origin");
+  response.headers.set(
+    "Permissions-Policy",
+    "camera=(), microphone=(), geolocation=(), payment=()",
+  );
+  response.headers.set("X-Frame-Options", "DENY");
+  if (!response.headers.has("Content-Security-Policy"))
+    response.headers.set(
+      "Content-Security-Policy",
+      "frame-ancestors 'none'; base-uri 'self'; object-src 'none'",
+    );
+  return response;
+}

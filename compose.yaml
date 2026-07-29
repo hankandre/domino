@@ -27,6 +27,7 @@ x-domino-environment: &domino-environment
 
 x-domino-security: &domino-security
   user: "10001:10001"
+  pids_limit: 256
   read_only: true
   cap_drop:
     - ALL
@@ -37,7 +38,17 @@ x-domino-security: &domino-security
 
 services:
   postgres:
-    image: docker.io/library/postgres:17-alpine
+    image: docker.io/library/postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+    user: "70:70"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /var/run/postgresql:size=16m,mode=1777
     environment:
       POSTGRES_DB: domino
       POSTGRES_USER: domino
@@ -45,7 +56,7 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U domino -d domino"]
+      test: ["CMD", "pg_isready", "-U", "domino", "-d", "domino"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -54,14 +65,9 @@ services:
   migrate:
     build:
       context: .
-    image: domino:${DOMINO_IMAGE_TAG:-local}
+      target: migration
+    image: domino-migrate:${DOMINO_IMAGE_TAG:-local}
     <<: *domino-security
-    command:
-      [
-        "node_modules/drizzle-kit/bin.cjs",
-        "migrate",
-        "--config=drizzle.config.ts",
-      ]
     environment: *domino-environment
     depends_on:
       postgres:
@@ -71,6 +77,7 @@ services:
   app:
     build:
       context: .
+      target: runtime
     image: domino:${DOMINO_IMAGE_TAG:-local}
     <<: *domino-security
     environment: *domino-environment
@@ -91,7 +98,7 @@ services:
       test:
         [
           "CMD",
-          "node",
+          "/nodejs/bin/node",
           "-e",
           "fetch('http://127.0.0.1:3000/api/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
         ]
@@ -111,6 +118,7 @@ services:
     <<: *domino-security
     environment:
       DOMINO_SERVER: http://app:3000
+      DOMINO_ALLOW_INSECURE_HTTP: "true"
     volumes:
       - domino-cli-config:/home/domino/.config/domino
     depends_on:
@@ -130,6 +138,7 @@ services:
     <<: *domino-security
     environment:
       DOMINO_SERVER: http://app:3000
+      DOMINO_ALLOW_INSECURE_HTTP: "true"
     volumes:
       - domino-broker-config:/home/domino/.config/domino
     depends_on:
@@ -146,6 +155,8 @@ services:
     image: domino-cli:${DOMINO_CLI_IMAGE_TAG:-local}
     <<: *domino-security
     command: ["broker", "serve"]
+    environment:
+      DOMINO_ALLOW_INSECURE_HTTP: "true"
     volumes:
       - domino-broker-config:/home/domino/.config/domino:ro
       - domino-broker-socket:/run/domino
@@ -165,7 +176,7 @@ services:
     environment:
       DOMINO_BROKER_SOCKET: /run/domino/broker.sock
     volumes:
-      - domino-broker-socket:/run/domino
+      - domino-broker-socket:/run/domino:ro
     depends_on:
       - broker
 

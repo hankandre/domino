@@ -5,17 +5,26 @@ import {
   sessionCookieName,
   sessionCookieOptions,
 } from "$lib/server/auth/oidc";
+import {
+  hasTrustedOrigin,
+  readBoundedFormData,
+} from "$lib/server/auth/request";
 
 export const actions: Actions = {
   default: async ({ cookies, getClientAddress, request, url }) => {
-    const contentLength = Number(request.headers.get("content-length") ?? "0");
-    if (contentLength > 4_096) {
+    if (!hasTrustedOrigin(request, process.env.ORIGIN ?? url.origin)) {
+      return fail(403, {
+        localError: "Sign-in requires a same-origin request.",
+        email: "",
+      });
+    }
+    const form = await readBoundedFormData(request);
+    if (!form) {
       return fail(413, {
         localError: "The sign-in request is too large.",
         email: "",
       });
     }
-    const form = await request.formData();
     const email = String(form.get("email") ?? "")
       .trim()
       .toLowerCase();

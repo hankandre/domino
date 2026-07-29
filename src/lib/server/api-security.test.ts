@@ -131,4 +131,33 @@ describe("API browser boundaries", () => {
 
     expect(response.status).toBe(400);
   });
+
+  test("rejects script-capable stored URLs", async () => {
+    process.env.DOMINO_DEMO_MODE = "true";
+    const response = await app.request("/api/v1/products", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "http://localhost",
+      },
+      body: JSON.stringify({
+        name: "Unsafe link",
+        productUrl: "javascript:alert(document.domain)",
+        warranty: { claimUrl: "data:text/html,unsafe" },
+      }),
+    });
+
+    expect(response.status).toBe(400);
+  });
+
+  test("rejects oversized public device bodies before parsing", async () => {
+    process.env.DOMINO_DEMO_MODE = "true";
+    const response = await app.request("/api/device/start", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "x".repeat(9_000) }),
+    });
+
+    expect(response.status).toBe(413);
+  });
 });

@@ -27,11 +27,20 @@ describe("permission-aware related-data projections", () => {
         id: "claim-one",
         documents: [{ id: "document-one" }],
         notes: [{ id: "note-one" }],
+        events: [
+          { eventType: "created" },
+          { eventType: "note_added" },
+          { eventType: "document_attached" },
+        ],
       },
       { documents: false, notes: true },
     );
 
     expect(projected.documents).toEqual([]);
     expect(projected.notes).toEqual([{ id: "note-one" }]);
+    expect(projected.events).toEqual([
+      { eventType: "created" },
+      { eventType: "note_added" },
+    ]);
   });
 });

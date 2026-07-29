@@ -44,16 +44,17 @@ docker compose up --build
 
 Compose binds Domino to `127.0.0.1` by default, which is appropriate for local evaluation and a same-host reverse proxy. Set `DOMINO_BIND_ADDRESS` deliberately if the container must listen on another host interface. Demo mode is disabled unless `DOMINO_DEMO_MODE=true`; because it is unauthenticated, enable it only on loopback for deliberate evaluation.
 
-The Domino application and migration containers start directly as UID/GID `10001`. They never start as root, call `su`, or change identity. Migrations run in the separate `migrate` service before the app becomes eligible to start. The app root filesystem is read-only; only `/data/uploads` and `/tmp` are writable. The Docker build context excludes `.env`, `secrets/`, and application data.
+The Domino application and migration containers start directly as UID/GID `10001`. They never start as root, call `su`, or change identity. The bundled PostgreSQL service also starts directly as its image's numeric UID/GID `70`, rather than starting as root and dropping privileges. Migrations run in the separate `migrate` service before the app becomes eligible to start. Runtime root filesystems are read-only; only the explicitly mounted data and temporary paths are writable. The Docker build context excludes `.env`, `secrets/`, and application data.
 
 The browser application and Rust CLI are separate images:
 
 ```text
 ghcr.io/hankandre/domino:0.1.1
+ghcr.io/hankandre/domino-migrate:0.1.1
 ghcr.io/hankandre/domino-cli:0.1.1
 ```
 
-`Dockerfile` contains only the web application and migration tooling. `Dockerfile.cli` contains only the `domino` CLI and credential broker. Both runtime images start directly as UID/GID `10001`.
+The web and migration targets use pinned Node.js Distroless Debian images. The statically linked Rust CLI/broker uses a pinned static Distroless Debian image. They contain no shell or package manager. Application production dependencies and migration tooling are installed into separate targets, and every first-party runtime starts directly as UID/GID `10001`.
 
 ### First local owner
 
@@ -62,7 +63,7 @@ When OIDC is not creating the first owner, run the one-time bootstrap command af
 ```sh
 docker compose run --rm \
   -v "$PWD/secrets:/run/bootstrap:ro" \
-  app scripts/bootstrap-owner.mjs \
+  migrate scripts/bootstrap-owner.mjs \
   --email owner@example.test \
   --name "Household owner" \
   --password-file /run/bootstrap/owner_password
@@ -72,10 +73,11 @@ Delete `owner_password` after the command succeeds. Further local accounts are i
 
 ## Kubernetes
 
-1. Build and push the image, then replace the example image in `deploy/k8s/deployment.yaml` and `deploy/k8s/migrate-job.yaml`.
-2. Copy `deploy/k8s/secret.example.yaml`, replace its values, and apply it.
-3. Apply `deploy/k8s/migrate-job.yaml` and wait for completion.
-4. Apply `deploy/k8s/kustomization.yaml`.
+1. Copy `deploy/k8s/secret.example.yaml`, replace its values, and apply it. The example NetworkPolicy expects an in-namespace PostgreSQL workload labelled `app.kubernetes.io/name: postgres`; adapt the database egress rule when using an external managed database.
+2. Apply the versioned `deploy/k8s/migrate-job.yaml` and wait for completion.
+3. Apply `deploy/k8s/kustomization.yaml`.
+
+Each release uses a versioned migration Job name because Kubernetes Job pod templates are immutable. Before a future upgrade, apply that release's new Job manifest and wait for it rather than editing an older completed Job. Production operators may additionally replace the release tags with the published OCI digests for fully immutable deployment references.
 
 Both workload manifests enforce `runAsNonRoot`, UID/GID `10001`, `allowPrivilegeEscalation: false`, a read-only root filesystem, the runtime-default seccomp profile, and a complete capability drop.
 

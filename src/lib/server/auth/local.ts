@@ -27,6 +27,8 @@ const perIdentityAttempts = new Map<
 let globalAttempts = { count: 0, resetAt: 0 };
 let activePasswordVerifications = 0;
 const passwordVerificationQueue: Array<() => void> = [];
+const invitationTokenPattern = /^domino_invite_[A-Za-z0-9_-]{43}$/;
+const resetTokenPattern = /^domino_reset_[A-Za-z0-9_-]{43}$/;
 
 function consumeAttempt(
   attempts: Map<string, { count: number; resetAt: number }>,
@@ -57,23 +59,25 @@ function consumeAttempt(
 
 export function consumeLoginAttempt(address: string, email: string) {
   const now = Date.now();
-  if (globalAttempts.resetAt <= now) {
-    globalAttempts = { count: 0, resetAt: now + 60_000 };
-  }
-  if (globalAttempts.count >= 240) return false;
-  globalAttempts.count += 1;
-
   const normalizedAddress = address.slice(0, 128);
   const normalizedEmail = email.trim().toLowerCase().slice(0, 254);
-  return (
-    consumeAttempt(perAddressAttempts, normalizedAddress, 30, now) &&
-    consumeAttempt(
+  if (!consumeAttempt(perAddressAttempts, normalizedAddress, 30, now))
+    return false;
+  if (
+    !consumeAttempt(
       perIdentityAttempts,
       `${normalizedAddress}:${normalizedEmail}`,
       10,
       now,
     )
-  );
+  )
+    return false;
+  if (globalAttempts.resetAt <= now) {
+    globalAttempts = { count: 0, resetAt: now + 60_000 };
+  }
+  if (globalAttempts.count >= 240) return false;
+  globalAttempts.count += 1;
+  return true;
 }
 
 async function withPasswordVerificationSlot<T>(
@@ -95,13 +99,18 @@ async function withPasswordVerificationSlot<T>(
 }
 
 export async function hashPassword(password: string) {
-  return hash(password, {
-    algorithm: 2,
-    memoryCost: 19_456,
-    timeCost: 2,
-    outputLen: 32,
-    parallelism: 1,
-  });
+  const passwordHash = await withPasswordVerificationSlot(() =>
+    hash(password, {
+      algorithm: 2,
+      memoryCost: 19_456,
+      timeCost: 2,
+      outputLen: 32,
+      parallelism: 1,
+    }),
+  );
+  if (!passwordHash)
+    throw new Error("Password service is busy. Try again shortly.");
+  return passwordHash;
 }
 
 export async function loginWithPassword(
@@ -115,6 +124,7 @@ export async function loginWithPassword(
     .select({
       userId: users.id,
       passwordHash: users.passwordHash,
+      authenticationVersion: users.authenticationVersion,
       actorId: actors.id,
     })
     .from(users)
@@ -137,7 +147,11 @@ export async function loginWithPassword(
     verify(comparisonHash, password).catch(() => false),
   );
   if (!account?.passwordHash || !valid) return null;
-  return createWebSession(account.actorId, userAgent);
+  return createWebSession(
+    account.actorId,
+    userAgent,
+    account.authenticationVersion,
+  );
 }
 
 function createOneTimeToken(prefix: string) {
@@ -200,6 +214,7 @@ export async function createInvitation(
 }
 
 export async function inspectInvitation(token: string) {
+  if (!invitationTokenPattern.test(token)) return null;
   const tokenHash = createHash("sha256").update(token).digest("hex");
   const [invitation] = await requireDb()
     .select({
@@ -229,7 +244,9 @@ export async function acceptInvitation(
   userAgent: string | null,
 ) {
   const database = requireDb();
+  if (!invitationTokenPattern.test(token)) return null;
   const tokenHash = createHash("sha256").update(token).digest("hex");
+  if (!(await inspectInvitation(token))) return null;
   const passwordHash = await hashPassword(password);
   const actorId = await database.transaction(async (tx) => {
     const [invitation] = await tx
@@ -305,6 +322,15 @@ export async function createPasswordReset(
       .from(actors)
       .where(eq(actors.id, createdByActorId))
       .limit(1);
+    await tx
+      .update(passwordResetTokens)
+      .set({ consumedAt: new Date() })
+      .where(
+        and(
+          eq(passwordResetTokens.userId, userId),
+          isNull(passwordResetTokens.consumedAt),
+        ),
+      );
     const [reset] = await tx
       .insert(passwordResetTokens)
       .values({
@@ -330,6 +356,7 @@ export async function createPasswordReset(
 }
 
 export async function inspectPasswordReset(token: string) {
+  if (!resetTokenPattern.test(token)) return null;
   const tokenHash = createHash("sha256").update(token).digest("hex");
   const [reset] = await requireDb()
     .select({ email: users.email, expiresAt: passwordResetTokens.expiresAt })
@@ -348,7 +375,9 @@ export async function inspectPasswordReset(token: string) {
 
 export async function resetPassword(token: string, password: string) {
   const database = requireDb();
+  if (!resetTokenPattern.test(token)) return false;
   const tokenHash = createHash("sha256").update(token).digest("hex");
+  if (!(await inspectPasswordReset(token))) return false;
   const passwordHash = await hashPassword(password);
   return database.transaction(async (tx) => {
     const [reset] = await tx
@@ -366,7 +395,11 @@ export async function resetPassword(token: string, password: string) {
     if (!reset) return false;
     await tx
       .update(users)
-      .set({ passwordHash, updatedAt: new Date() })
+      .set({
+        passwordHash,
+        authenticationVersion: sql`${users.authenticationVersion} + 1`,
+        updatedAt: new Date(),
+      })
       .where(eq(users.id, reset.userId));
     const userActors = await tx
       .select({ id: actors.id, householdId: actors.householdId })
@@ -386,7 +419,12 @@ export async function resetPassword(token: string, password: string) {
     await tx
       .update(passwordResetTokens)
       .set({ consumedAt: new Date() })
-      .where(eq(passwordResetTokens.id, reset.id));
+      .where(
+        and(
+          eq(passwordResetTokens.userId, reset.userId),
+          isNull(passwordResetTokens.consumedAt),
+        ),
+      );
     for (const actor of userActors) {
       await tx.insert(auditEvents).values({
         householdId: actor.householdId,

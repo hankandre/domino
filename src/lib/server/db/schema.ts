@@ -69,6 +69,9 @@ export const users = pgTable(
     email: text("email").notNull(),
     displayName: text("display_name").notNull(),
     passwordHash: text("password_hash"),
+    authenticationVersion: integer("authentication_version")
+      .notNull()
+      .default(1),
     disabled: boolean("disabled").notNull().default(false),
     ...timestamps,
   },
@@ -185,6 +188,9 @@ export const webSessions = pgTable(
       .notNull()
       .references(() => actors.id, { onDelete: "cascade" }),
     tokenHash: text("token_hash").notNull(),
+    authenticationVersion: integer("authentication_version")
+      .notNull()
+      .default(1),
     userAgentHash: text("user_agent_hash"),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true })

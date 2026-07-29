@@ -10,7 +10,11 @@ export type ClaimRelatedReadAccess = {
 };
 
 export function projectClaimRelatedData<
-  T extends { documents?: unknown[]; notes?: unknown[] },
+  T extends {
+    documents?: unknown[];
+    notes?: unknown[];
+    events?: Array<{ eventType: string }>;
+  },
 >(claim: T, access: ClaimRelatedReadAccess): T {
   return {
     ...claim,
@@ -18,6 +22,15 @@ export function projectClaimRelatedData<
       ? { documents: access.documents ? claim.documents : [] }
       : {}),
     ...("notes" in claim ? { notes: access.notes ? claim.notes : [] } : {}),
+    ...("events" in claim
+      ? {
+          events: (claim.events ?? []).filter(
+            (event) =>
+              (access.notes || event.eventType !== "note_added") &&
+              (access.documents || !event.eventType.startsWith("document_")),
+          ),
+        }
+      : {}),
   } as T;
 }
 
@@ -130,18 +143,21 @@ export async function getClaim(
     warrantyRows.find((item) => item.id === row.claim.warrantyId) ??
     warrantyRows[0] ??
     null;
-  return {
-    ...row.claim,
-    product: {
-      name: row.productName,
-      brand: row.productBrand,
-      model: row.productModel,
+  return projectClaimRelatedData(
+    {
+      ...row.claim,
+      product: {
+        name: row.productName,
+        brand: row.productBrand,
+        model: row.productModel,
+      },
+      events,
+      notes,
+      documents,
+      warranty,
     },
-    events,
-    notes,
-    documents,
-    warranty,
-  };
+    access,
+  );
 }
 
 export async function createClaim(
@@ -169,6 +185,19 @@ export async function createClaim(
       )
       .limit(1);
     if (!product) return null;
+    if (input.warrantyId) {
+      const [warranty] = await tx
+        .select({ id: schema.warranties.id })
+        .from(schema.warranties)
+        .where(
+          and(
+            eq(schema.warranties.id, input.warrantyId),
+            eq(schema.warranties.productId, productId),
+          ),
+        )
+        .limit(1);
+      if (!warranty) return null;
+    }
 
     const reference = `CLM-${new Date().getUTCFullYear()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
     const [claim] = await tx

@@ -347,6 +347,8 @@ export async function finishOidcLogin(
 
   const actorId = await linkIdentityToActor(config, claims);
   const sessionToken = await createWebSession(actorId, userAgent);
+  if (!sessionToken)
+    throw new Error("Your Domino household account is unavailable.");
   cookies.set(sessionCookieName, sessionToken, sessionCookieOptions());
   return safeReturnTo(flow.returnTo);
 }
@@ -393,6 +395,11 @@ async function linkIdentityToActor(config: OidcConfig, claims: IdentityClaims) {
         if (!config.linkExistingByEmail) {
           throw new Error(
             "An existing Domino account uses this email. An administrator must explicitly link its OIDC identity.",
+          );
+        }
+        if (claims.email_verified !== true) {
+          throw new Error(
+            "A verified email address is required to link an existing Domino account.",
           );
         }
         userId = existingUser.id;
@@ -443,15 +450,21 @@ async function linkIdentityToActor(config: OidcConfig, claims: IdentityClaims) {
     if (configuredHouseholdId)
       actorConditions.push(eq(actors.householdId, configuredHouseholdId));
     const [existingActor] = await tx
-      .select({ id: actors.id })
+      .select({ id: actors.id, disabled: actors.disabled })
       .from(actors)
-      .where(and(...actorConditions, eq(actors.disabled, false)))
+      .where(and(...actorConditions))
       .limit(1);
-    if (existingActor) return existingActor.id;
+    const existingActorId = resolveExistingActor(existingActor);
+    if (existingActorId) return existingActorId;
     if (!config.autoProvision)
       throw new Error("Your account does not have household access.");
 
     const household = await resolveProvisioningHousehold(tx, email);
+    if (household.bootstrapped && claims.email_verified !== true) {
+      throw new Error(
+        "A verified email address is required to bootstrap the first Domino owner.",
+      );
+    }
     const [createdActor] = await tx
       .insert(actors)
       .values({
@@ -484,6 +497,14 @@ async function linkIdentityToActor(config: OidcConfig, claims: IdentityClaims) {
       .values({ actorId: createdActor.id, roleId: defaultRole.id });
     return createdActor.id;
   });
+}
+
+export function resolveExistingActor(
+  actor: { id: string; disabled: boolean } | undefined,
+) {
+  if (actor?.disabled)
+    throw new Error("Your Domino household account is disabled.");
+  return actor?.id ?? null;
 }
 
 type Transaction = Parameters<
@@ -566,20 +587,42 @@ async function resolveProvisioningHousehold(tx: Transaction, email: string) {
 export async function createWebSession(
   actorId: string,
   userAgent: string | null,
+  expectedAuthenticationVersion?: number,
 ) {
   const token = `domino_session_${randomBase64Url(48)}`;
   const tokenHash = createHash("sha256").update(token).digest("hex");
-  await requireDb()
-    .insert(webSessions)
-    .values({
+  const created = await requireDb().transaction(async (tx) => {
+    const [account] = await tx
+      .select({
+        authenticationVersion: users.authenticationVersion,
+        actorDisabled: actors.disabled,
+        userDisabled: users.disabled,
+      })
+      .from(actors)
+      .innerJoin(users, eq(actors.userId, users.id))
+      .where(eq(actors.id, actorId))
+      .for("update")
+      .limit(1);
+    if (
+      !account ||
+      account.actorDisabled ||
+      account.userDisabled ||
+      (expectedAuthenticationVersion !== undefined &&
+        account.authenticationVersion !== expectedAuthenticationVersion)
+    )
+      return false;
+    await tx.insert(webSessions).values({
       actorId,
       tokenHash,
+      authenticationVersion: account.authenticationVersion,
       userAgentHash: userAgent
         ? createHash("sha256").update(userAgent).digest("hex")
         : null,
       expiresAt: new Date(Date.now() + sessionTtlSeconds() * 1000),
     });
-  return token;
+    return true;
+  });
+  return created ? token : null;
 }
 
 export async function authenticateSessionToken(
@@ -604,6 +647,7 @@ export async function authenticateSessionToken(
     .where(
       and(
         eq(webSessions.tokenHash, tokenHash),
+        eq(webSessions.authenticationVersion, users.authenticationVersion),
         isNull(webSessions.revokedAt),
         gt(webSessions.expiresAt, new Date()),
         eq(actors.disabled, false),

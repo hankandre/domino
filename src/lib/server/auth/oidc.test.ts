@@ -1,5 +1,10 @@
 import { describe, expect, test } from "vitest";
-import { getOidcConfig, groupsAreAllowed, safeReturnTo } from "./oidc";
+import {
+  getOidcConfig,
+  groupsAreAllowed,
+  resolveExistingActor,
+  safeReturnTo,
+} from "./oidc";
 
 describe("OIDC configuration", () => {
   test("stays disabled when no issuer or client is configured", () => {
@@ -37,5 +42,14 @@ describe("OIDC request safety", () => {
     expect(groupsAreAllowed(["household", "admins"], ["household"])).toBe(true);
     expect(groupsAreAllowed(["guests"], ["household"])).toBe(false);
     expect(groupsAreAllowed(undefined, [])).toBe(true);
+  });
+
+  test("never treats a disabled household membership as absent", () => {
+    expect(() =>
+      resolveExistingActor({ id: "disabled-actor", disabled: true }),
+    ).toThrow("disabled");
+    expect(resolveExistingActor({ id: "enabled-actor", disabled: false })).toBe(
+      "enabled-actor",
+    );
   });
 });

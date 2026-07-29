@@ -20,29 +20,30 @@
   "dependencies": {
     "@hono/zod-validator": "^0.9.0",
     "@node-rs/argon2": "^2.0.2",
-    "@sveltejs/adapter-node": "^5.5.7",
     "@sveltejs/kit": "^2.70.1",
-    "@sveltejs/vite-plugin-svelte": "^7.2.0",
-    "@tailwindcss/vite": "^4.3.3",
-    "@types/pg": "^8.20.0",
-    "drizzle-kit": "^0.31.10",
     "drizzle-orm": "^0.45.2",
     "fuse.js": "^7.5.0",
     "hono": "^4.12.32",
     "jose": "^6.2.4",
+    "pg": "^8.22.0",
+    "svelte": "^5.56.8",
+    "swagger-ui-dist": "^5.31.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-node": "^5.5.7",
+    "@sveltejs/vite-plugin-svelte": "^7.2.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/pg": "^8.20.0",
+    "drizzle-kit": "^0.31.10",
     "lucide-svelte": "^1.0.1",
     "nanoid": "^6.0.0",
-    "pg": "^8.22.0",
     "prettier": "^3.9.6",
     "prettier-plugin-svelte": "^4.1.1",
-    "svelte": "^5.56.8",
     "svelte-check": "^4.7.4",
-    "swagger-ui-dist": "^5.31.0",
     "tailwindcss": "^4.3.3",
     "typescript": "5.9.3",
     "vite": "^8.1.5",
-    "vitest": "^4.1.10",
-    "zod": "^4.4.3"
-  },
-  "devDependencies": {}
+    "vitest": "^4.1.10"
+  }
 }

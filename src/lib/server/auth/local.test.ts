@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { consumeLoginAttempt } from "./local";
+import {
+  consumeLoginAttempt,
+  inspectInvitation,
+  inspectPasswordReset,
+} from "./local";
 
 describe("local login throttling", () => {
   test("limits an address even when it rotates email addresses", () => {
@@ -10,5 +14,10 @@ describe("local login throttling", () => {
       ).toBe(true);
     }
     expect(consumeLoginAttempt(address, "another@example.test")).toBe(false);
+  });
+
+  test("rejects malformed public tokens before reaching the database", async () => {
+    await expect(inspectInvitation("not-an-invitation")).resolves.toBeNull();
+    await expect(inspectPasswordReset("not-a-reset")).resolves.toBeNull();
   });
 });

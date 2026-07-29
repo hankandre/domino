@@ -38,7 +38,7 @@ async function assertAssociation(
   }
   if (claimId) {
     const [claim] = await db
-      .select({ id: schema.claims.id })
+      .select({ id: schema.claims.id, productId: schema.claims.productId })
       .from(schema.claims)
       .where(
         and(
@@ -48,6 +48,7 @@ async function assertAssociation(
       )
       .limit(1);
     if (!claim) return false;
+    if (productId && claim.productId !== productId) return false;
   }
   return true;
 }
