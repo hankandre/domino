@@ -7,7 +7,6 @@
     LayoutGrid,
     Menu,
     Settings,
-    ShieldCheck,
     Users,
     X,
   } from "lucide-svelte";
@@ -98,11 +97,14 @@
         class="flex h-20 items-center justify-between border-b border-white/12 px-5"
       >
         <a href="/" class="flex items-center gap-3" aria-label="Domino home">
-          <span
-            class="grid size-9 place-items-center border border-white/25 bg-white/8"
-          >
-            <ShieldCheck size={21} strokeWidth={1.8} />
-          </span>
+          <img
+            src="/brand/domino-icon-192.png"
+            alt=""
+            width="40"
+            height="40"
+            class="size-10 object-contain"
+            aria-hidden="true"
+          />
           <span>
             <span class="block text-[1.2rem] font-bold tracking-[-0.03em]"
               >Domino</span
@@ -129,8 +131,7 @@
           <a
             href={item.href}
             aria-current={page.url.pathname === item.href ||
-            (item.href !== "/" &&
-              page.url.pathname.startsWith(`${item.href}/`))
+            (item.href !== "/" && page.url.pathname.startsWith(`${item.href}/`))
               ? "page"
               : undefined}
             onclick={() => (mobileNavOpen = false)}
@@ -221,7 +222,20 @@
         >
           <Menu size={20} />
         </button>
-        <a href="/" class="text-lg font-bold tracking-[-0.03em]">Domino</a>
+        <a
+          href="/"
+          class="flex items-center gap-2 text-lg font-bold tracking-[-0.03em]"
+        >
+          <img
+            src="/brand/domino-icon-192.png"
+            alt=""
+            width="32"
+            height="32"
+            class="size-8 object-contain"
+            aria-hidden="true"
+          />
+          Domino
+        </a>
         <a
           href="/products/new"
           class="grid size-10 place-items-center bg-ink text-white"

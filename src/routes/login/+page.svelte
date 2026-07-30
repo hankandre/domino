@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ArrowRight, KeyRound, ShieldCheck } from "lucide-svelte";
+  import { ArrowRight, KeyRound } from "lucide-svelte";
   import { page } from "$app/state";
 
   let { data, form } = $props();
@@ -22,11 +22,14 @@
       class="flex items-center gap-3"
       aria-label="Domino sign in"
     >
-      <span
-        class="grid size-10 place-items-center border border-white/25 bg-white/8"
-      >
-        <ShieldCheck size={22} strokeWidth={1.8} />
-      </span>
+      <img
+        src="/brand/domino-icon-192.png"
+        alt=""
+        width="44"
+        height="44"
+        class="size-11 object-contain"
+        aria-hidden="true"
+      />
       <span>
         <span class="block text-xl font-bold tracking-[-0.03em]">Domino</span>
         <span
