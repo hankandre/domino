@@ -111,9 +111,8 @@ test "$(docker inspect "$application" --format '{{.HostConfig.ReadonlyRootfs}}')
 test "$(docker inspect "$application" --format '{{.Config.User}}')" = "10001:10001"
 
 stage="checking graceful shutdown"
-started="$(date +%s)"
 docker stop --time 10 "$application" >/dev/null
-elapsed="$(( $(date +%s) - started ))"
-test "$elapsed" -lt 10
+test "$(docker inspect "$application" --format '{{.State.ExitCode}}')" = "0"
+test "$(docker inspect "$application" --format '{{.State.OOMKilled}}')" = "false"
 
 echo "Container migrations, storage readiness, read-only runtime, API, and graceful shutdown passed."

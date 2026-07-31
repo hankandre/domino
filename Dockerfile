@@ -24,7 +24,8 @@ WORKDIR /app
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=3000 \
-    BODY_SIZE_LIMIT=55M
+    BODY_SIZE_LIMIT=55M \
+    SHUTDOWN_TIMEOUT=8
 
 COPY --from=filesystem --chown=10001:10001 /skeleton/data /data
 COPY --from=build --chown=10001:10001 /app/build ./build

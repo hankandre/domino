@@ -14,6 +14,14 @@ export const pool = connectionString
 
 export const db = pool ? drizzle({ client: pool, schema }) : null;
 
+if (pool) {
+  process.once("sveltekit:shutdown", () => {
+    void pool.end().catch((cause) => {
+      console.error("Failed to close the database pool during shutdown", cause);
+    });
+  });
+}
+
 export function requireDb() {
   if (!db) {
     throw new Error("DATABASE_URL is required for this operation");
