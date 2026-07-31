@@ -26,7 +26,7 @@ session secret, and bootstrap a local owner instead. Validate with:
 
 ```sh
 bun run check
-bun test
+bun run test
 bun run build
 cargo test --workspace
 ```

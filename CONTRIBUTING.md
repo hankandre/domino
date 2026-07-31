@@ -14,7 +14,7 @@ The minimum local checks are:
 bun install --frozen-lockfile
 bun run lint
 bun run check
-bun test
+bun run test
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
@@ -22,7 +22,7 @@ bun run build
 ```
 
 Run Browser Mode, PostgreSQL integration, migration, and deployment checks when
-the changed area needs them. `bun test` is the only unit/integration runner;
+the changed area needs them. Bun is the only unit/integration test runner;
 Vitest is reserved for `.browser.ts` checks that require a real browser.
 Those tests cover rendered component interactions; use the documented bounded
 `agent-browser` pass when a change needs route-level deployed-app confidence.

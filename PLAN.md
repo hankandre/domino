@@ -451,10 +451,10 @@ Run this only after Phases 1–8 are complete for the intended release scope.
 - [x] Run fresh, independent security, performance, accessibility, Svelte, and
       maintainability reviews. Triage every finding as fixed, explicitly deferred
       with rationale, or release-blocking.
-- [ ] Produce a release-candidate checklist with schema version, app version, CLI
+- [x] Produce a release-candidate checklist with schema version, app version, CLI
       compatibility, image digests, backups tested, known limitations, and rollback
       instructions.
-- [ ] Commit the completed scope, push it, wait for CI, publish the appropriate
+- [x] Commit the completed scope, push it, wait for CI, publish the appropriate
       independent release, and verify archives, checksums, images, Swagger, health,
       migrations, and a clean install from the published artifacts.
 

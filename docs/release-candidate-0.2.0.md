@@ -31,8 +31,8 @@ complete.
       zoom, reduced motion, responsive reflow, service-account presets, claim
       management, Paperless settings, and self-hosted Swagger.
 - [x] Main-branch CI run
-      [`30664881780`](https://github.com/hankandre/domino/actions/runs/30664881780)
-      passed at `c0a72ee168c2db30c1226b706b62cbe2b3fc1f65`.
+      [`30669063429`](https://github.com/hankandre/domino/actions/runs/30669063429)
+      passed at `06d1c84d27b63d21bd52a330069b1b7327cdc2d4`.
 - [x] Native AMD64 and emulated ARM64 container smoke passed in that run.
 - [x] Compose named-volume backup/restore smoke passed in that run.
 - [x] Kubernetes fresh install/migration/rollout/rollback smoke passed in that
@@ -43,18 +43,35 @@ complete.
 
 ## Published artifacts
 
-Record immutable manifest digests after both independent workflows succeed.
+The versioned tags below are multi-architecture OCI indexes for `linux/amd64`
+and `linux/arm64`; their attached BuildKit attestations contain provenance and
+SBOM metadata.
 
-- Application image `ghcr.io/hankandre/domino:0.2.0`: pending
-- Migration image `ghcr.io/hankandre/domino-migrate:0.2.0`: pending
-- CLI image `ghcr.io/hankandre/domino-cli:0.2.0`: pending
-- Application GitHub release: pending
-- CLI GitHub release and archive checksum verification: pending
+- Application image `ghcr.io/hankandre/domino:0.2.0`:
+  `sha256:2d6e4cdfa5dc9729df0be9275722fff67588c19b3ba839447c5a4250a5368d3d`
+- Migration image `ghcr.io/hankandre/domino-migrate:0.2.0`:
+  `sha256:2b769d4eb1769081c5e697e6e396873dc0ff79a79584c23e85766f0af7802414`
+- CLI image `ghcr.io/hankandre/domino-cli:0.2.0`:
+  `sha256:40557bbf1c7ca44d767bcafca74b5e621db0a09e71334ea0118f518af1dbd71a`
+- [Application GitHub release](https://github.com/hankandre/domino/releases/tag/app-v0.2.0),
+  published by successful workflow
+  [`30671073007`](https://github.com/hankandre/domino/actions/runs/30671073007).
+- [CLI GitHub release](https://github.com/hankandre/domino/releases/tag/cli-v0.2.0),
+  published by successful workflow
+  [`30671073038`](https://github.com/hankandre/domino/actions/runs/30671073038).
+- CLI archive checksum verification passed for both release assets:
+  - aarch64: `50326da9ced1d503ccb64209a88ccb68449e6edcec7da5289e62a792531c533a`
+  - x86_64: `8a9c2609897e7f8822f4c364901b8382ca1d7ec098f89def231d120985c2107b`
+- A clean published-image install applied migration `0014`, served health,
+  readiness, self-hosted Swagger assets, and OpenAPI from the read-only UID
+  `10001:10001` application container, then shut down with exit code zero.
+  The published CLI binary and image both reported `domino 0.2.0`.
 
 ## Independent review dispositions
 
-The release reviews are rerun after the fixes below. Their final verdicts and
-commit SHA must be recorded in the candidate evidence before tagging.
+The release reviews were rerun against `c0a72ee168c2db30c1226b706b62cbe2b3fc1f65`.
+The tagged candidate `06d1c84d27b63d21bd52a330069b1b7327cdc2d4`
+adds only the resulting CI-readiness hardening and release evidence.
 
 - Security: approved after invitation and reset authority revalidation, issuer
   invalidation, system-only human/OIDC role enforcement at issuance and

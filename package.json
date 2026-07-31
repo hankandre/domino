@@ -20,9 +20,9 @@
     "test:performance": "bun scripts/performance-baseline.ts",
     "db:studio": "drizzle-kit studio",
     "bootstrap-owner": "node scripts/bootstrap-owner.mjs",
-    "test": "bun test",
+    "test": "bun test --path-ignore-patterns '**/*.integration.test.ts'",
     "test:browser": "vitest run --config vitest.browser.config.ts",
-    "test:integration": "svelte-kit sync && bun test src/lib/server/**/*.integration.test.ts",
+    "test:integration": "bun -e 'if (!process.env.DATABASE_URL) throw new Error(\"DATABASE_URL is required for integration tests\")' && svelte-kit sync && bun test src/lib/server/**/*.integration.test.ts",
     "cli": "cargo run -p domino-cli --"
   },
   "dependencies": {

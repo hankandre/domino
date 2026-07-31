@@ -63,7 +63,7 @@ Run the smallest relevant checks while iterating, then before handoff run:
 ```sh
 bun run lint
 bun run check
-bun test
+bun run test
 bun run test:browser
 DATABASE_URL=postgresql://... bun run test:integration
 DATABASE_URL=postgresql://... bun run test:migrations
