@@ -40,9 +40,23 @@ done
 docker exec "$database" pg_isready -U domino -d domino >/dev/null
 
 database_url="postgres://domino:${database_password}@${database}:5432/domino"
-docker run --rm "${platform_args[@]}" --network "$network" \
-  -e DATABASE_URL="$database_url" \
-  "$migration_image" >/dev/null
+migration_log="${RUNNER_TEMP:-/tmp}/${prefix}-migration.log"
+migration_succeeded=false
+for _ in $(seq 1 10); do
+  if docker run --rm "${platform_args[@]}" --network "$network" \
+    -e DATABASE_URL="$database_url" \
+    "$migration_image" >"$migration_log" 2>&1; then
+    migration_succeeded=true
+    break
+  fi
+  sleep 1
+done
+if [[ "$migration_succeeded" != true ]]; then
+  echo "Migration container failed after the database reported ready."
+  cat "$migration_log"
+  docker logs "$database"
+  exit 1
+fi
 
 docker run -d "${platform_args[@]}" --name "$application" --network "$network" \
   --user 10001:10001 \
