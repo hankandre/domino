@@ -1,0 +1,9 @@
+CREATE INDEX "claims_household_status_updated_idx" ON "claims" USING btree ("household_id","status","updated_at");--> statement-breakpoint
+CREATE INDEX "product_serials_normalized_value_idx" ON "product_serials" USING btree (upper(regexp_replace(coalesce("value", ''), '[^A-Za-z0-9]', '', 'g')));--> statement-breakpoint
+CREATE INDEX "product_sources_household_normalized_external_idx" ON "product_sources" USING btree ("household_id",lower(regexp_replace(trim(coalesce("external_system", '')), '[[:space:]]+', ' ', 'g')),upper(regexp_replace(coalesce("external_id", ''), '[^A-Za-z0-9]', '', 'g'))) WHERE "product_sources"."external_system" is not null and "product_sources"."external_id" is not null;--> statement-breakpoint
+CREATE INDEX "products_household_normalized_name_idx" ON "products" USING btree ("household_id",lower(regexp_replace(trim(coalesce("name", '')), '[[:space:]]+', ' ', 'g')));--> statement-breakpoint
+CREATE INDEX "products_household_brand_model_idx" ON "products" USING btree ("household_id",lower(regexp_replace(trim(coalesce("brand", '')), '[[:space:]]+', ' ', 'g')),lower(regexp_replace(trim(coalesce("model", '')), '[[:space:]]+', ' ', 'g')));--> statement-breakpoint
+CREATE INDEX "products_household_order_identity_idx" ON "products" USING btree ("household_id",lower(regexp_replace(trim(coalesce("retailer", '')), '[[:space:]]+', ' ', 'g')),lower(regexp_replace(trim(coalesce("order_number", '')), '[[:space:]]+', ' ', 'g')),lower(regexp_replace(trim(coalesce("brand", '')), '[[:space:]]+', ' ', 'g')),lower(regexp_replace(trim(coalesce("model", '')), '[[:space:]]+', ' ', 'g')));--> statement-breakpoint
+CREATE INDEX "products_household_purchase_idx" ON "products" USING btree ("household_id","purchase_date");--> statement-breakpoint
+CREATE INDEX "products_household_archive_idx" ON "products" USING btree ("household_id","archived_at");--> statement-breakpoint
+CREATE INDEX "warranties_ends_at_idx" ON "warranties" USING btree ("ends_at");

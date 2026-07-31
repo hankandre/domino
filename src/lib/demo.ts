@@ -1,8 +1,22 @@
 import type { ProductSummary } from "./types";
 
+export const DEMO_PRODUCT_IDS = {
+  boschDishwasher: "10000000-0000-4000-8000-000000000001",
+  kitchenaidMixer: "10000000-0000-4000-8000-000000000002",
+  sonyTv: "10000000-0000-4000-8000-000000000003",
+  dysonVacuum: "10000000-0000-4000-8000-000000000004",
+  waterHeater: "10000000-0000-4000-8000-000000000005",
+  weberGrill: "10000000-0000-4000-8000-000000000006",
+} as const;
+
+export const DEMO_CLAIM_IDS = {
+  dishwasherLeak: "20000000-0000-4000-8000-000000000001",
+  mixerMotor: "20000000-0000-4000-8000-000000000002",
+} as const;
+
 export const demoProducts: ProductSummary[] = [
   {
-    id: "bosch-dishwasher",
+    id: DEMO_PRODUCT_IDS.boschDishwasher,
     name: "800 Series Dishwasher",
     brand: "Bosch",
     model: "SHPM88Z75N",
@@ -18,7 +32,7 @@ export const demoProducts: ProductSummary[] = [
     retailer: "Home Depot",
     orderNumber: "HD-5128347",
     activeClaim: {
-      id: "CLM-240517",
+      id: DEMO_CLAIM_IDS.dishwasherLeak,
       reference: "CLM-240517",
       status: "needs_evidence",
       summary: "Leak from lower seal",
@@ -26,7 +40,7 @@ export const demoProducts: ProductSummary[] = [
     },
   },
   {
-    id: "kitchenaid-mixer",
+    id: DEMO_PRODUCT_IDS.kitchenaidMixer,
     name: "Artisan Stand Mixer",
     brand: "KitchenAid",
     model: "KSM150PSER",
@@ -41,7 +55,7 @@ export const demoProducts: ProductSummary[] = [
     retailer: "Williams Sonoma",
     orderNumber: "",
     activeClaim: {
-      id: "CLM-240422",
+      id: DEMO_CLAIM_IDS.mixerMotor,
       reference: "CLM-240422",
       status: "in_review",
       summary: "Motor stalls under load",
@@ -49,7 +63,7 @@ export const demoProducts: ProductSummary[] = [
     },
   },
   {
-    id: "sony-tv",
+    id: DEMO_PRODUCT_IDS.sonyTv,
     name: "Bravia XR OLED",
     brand: "Sony",
     model: "XR-65A80K",
@@ -66,7 +80,7 @@ export const demoProducts: ProductSummary[] = [
     orderNumber: "",
   },
   {
-    id: "dyson-vacuum",
+    id: DEMO_PRODUCT_IDS.dysonVacuum,
     name: "V15 Detect",
     brand: "Dyson",
     model: "V15",
@@ -82,7 +96,7 @@ export const demoProducts: ProductSummary[] = [
     orderNumber: "",
   },
   {
-    id: "water-heater",
+    id: DEMO_PRODUCT_IDS.waterHeater,
     name: "Performance Platinum",
     brand: "Rheem",
     model: "XE50T12EC55U1",
@@ -98,7 +112,7 @@ export const demoProducts: ProductSummary[] = [
     orderNumber: "",
   },
   {
-    id: "weber-grill",
+    id: DEMO_PRODUCT_IDS.weberGrill,
     name: "Genesis II E-310",
     brand: "Weber",
     model: "E-310",

@@ -1,0 +1,3 @@
+CREATE INDEX "claims_household_updated_idx" ON "claims" USING btree ("household_id","updated_at","id");--> statement-breakpoint
+CREATE INDEX "documents_household_active_created_idx" ON "documents" USING btree ("household_id","created_at","id") WHERE "documents"."trashed_at" is null;--> statement-breakpoint
+CREATE INDEX "products_household_active_updated_idx" ON "products" USING btree ("household_id","updated_at","id") WHERE "products"."archived_at" is null;

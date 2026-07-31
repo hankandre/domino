@@ -1,7 +1,11 @@
 <script lang="ts">
   import { ArrowLeft, Check, FilePlus2, ShieldCheck } from "lucide-svelte";
   import { goto } from "$app/navigation";
+  import { networkError, responseError } from "$lib/api-errors";
+  import { dominoApi } from "$lib/api-client";
+  import { uploadDocument } from "$lib/uploads";
   import PageHeader from "$lib/components/PageHeader.svelte";
+  import Pagination from "$lib/components/Pagination.svelte";
   let { data } = $props();
   let submitted = $state(false);
   let saving = $state(false);
@@ -10,51 +14,63 @@
 
   async function saveClaim(event: SubmitEvent) {
     event.preventDefault();
+    if (saving) return;
     saving = true;
     errorMessage = "";
-    const form = new FormData(event.currentTarget as HTMLFormElement);
-    const productId = String(form.get("productId"));
-    const response = await fetch(`/api/v1/products/${productId}/claims`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        issue: form.get("issue"),
-        noticedAt: form.get("noticedAt") || undefined,
-        preferredResolution: form.get("preferredResolution") || undefined,
-        nextAction: "Review the claim guide and gather required evidence",
-      }),
-    });
-    const result = await response.json();
-    if (!response.ok) {
-      errorMessage = result.error ?? "The claim could not be created.";
-      saving = false;
-      return;
-    }
-    submitted = true;
-    createdClaimId = result.claim.id;
-    const evidence = form
-      .getAll("evidence")
-      .filter(
-        (entry): entry is File => entry instanceof File && entry.size > 0,
+    try {
+      const form = new FormData(event.currentTarget as HTMLFormElement);
+      const productId = String(form.get("productId"));
+      const noticedAt = String(form.get("noticedAt") ?? "");
+      const preferredResolution = String(
+        form.get("preferredResolution") ?? "",
       );
-    for (const file of evidence) {
-      const body = new FormData();
-      body.set("file", file);
-      body.set("claimId", result.claim.id);
-      body.set("productId", productId);
-      body.set("kind", "claim");
-      const uploadResponse = await fetch("/api/v1/documents", {
-        method: "POST",
-        body,
+      const response = await dominoApi.api.v1.products[":id"].claims.$post({
+        param: { id: productId },
+        json: {
+          issue: String(form.get("issue") ?? ""),
+          noticedAt: noticedAt || undefined,
+          preferredResolution: preferredResolution || undefined,
+          nextAction: "Review the claim guide and gather required evidence",
+        },
       });
-      if (!uploadResponse.ok) {
-        const uploadResult = await uploadResponse.json().catch(() => ({}));
-        errorMessage = `The claim was created, but ${file.name} could not be attached: ${uploadResult.error ?? "upload failed"}`;
-        saving = false;
+      if (!response.ok) {
+        errorMessage = await responseError(
+          response,
+          "The claim could not be created.",
+        );
         return;
       }
+      const result = (await response.json()) as { claim: { id: string } };
+      submitted = true;
+      createdClaimId = result.claim.id;
+      const evidence = form
+        .getAll("evidence")
+        .filter(
+          (entry): entry is File => entry instanceof File && entry.size > 0,
+        );
+      for (const file of evidence) {
+        const uploadResponse = await uploadDocument(file, {
+          claimId: result.claim.id,
+          productId,
+          kind: "claim",
+        });
+        if (!uploadResponse.ok) {
+          const detail = await responseError(uploadResponse, "upload failed");
+          errorMessage = `The claim was created, but ${file.name} could not be attached: ${detail}`;
+          return;
+        }
+      }
+      await goto(`/claims/${result.claim.id}`);
+    } catch (cause) {
+      errorMessage = networkError(
+        cause,
+        createdClaimId
+          ? "The claim was created, but evidence could not be attached."
+          : "The claim could not be created.",
+      );
+    } finally {
+      saving = false;
     }
-    await goto(`/claims/${result.claim.id}`);
   }
 </script>
 
@@ -92,6 +108,23 @@
     >
       {errorMessage}
     </div>{/if}
+  <form method="GET" class="mt-8 flex flex-wrap gap-2">
+    <label class="min-w-0 flex-1">
+      <span class="sr-only">Search all products</span>
+      <input
+        type="search"
+        name="q"
+        value={data.productSearch?.query ?? ""}
+        placeholder="Find a product by name, model, serial, order, or date"
+        class="min-h-12 w-full border border-rule bg-sheet px-3"
+      />
+    </label>
+    <button
+      type="submit"
+      class="min-h-12 bg-ink px-5 text-sm font-bold text-white hover:bg-orange"
+      >Search products</button
+    >
+  </form>
   <form class="mt-8 space-y-6" onsubmit={saveClaim}>
     <label class="block"
       ><span class="text-xs font-bold tracking-[0.055em] text-muted uppercase"
@@ -107,6 +140,12 @@
           >{/each}</select
       ></label
     >
+    <Pagination
+      page={data.productSearch?.page ?? 1}
+      previousHref={data.productSearch?.previousHref ?? null}
+      nextHref={data.productSearch?.nextHref ?? null}
+      label="claim product options"
+    />
     <label class="block"
       ><span class="text-xs font-bold tracking-[0.055em] text-muted uppercase"
         >What happened? *</span
@@ -150,7 +189,7 @@
         accept="image/*,.pdf"
       /></label
     >
-    <div class="flex items-start gap-3 bg-blue-soft p-4 text-[#294968]">
+    <div class="flex items-start gap-3 bg-blue-soft p-4 text-blue-ink">
       <ShieldCheck size={19} class="shrink-0" />
       <p class="text-sm leading-relaxed">
         Starting a draft does not contact the manufacturer. Domino will show the

@@ -1,7 +1,12 @@
 import { lookup } from "node:dns/promises";
-import { request as httpRequest } from "node:http";
+import {
+  request as httpRequest,
+  type ClientRequest,
+  type IncomingMessage,
+  type RequestOptions,
+} from "node:http";
 import { request as httpsRequest } from "node:https";
-import { BlockList, isIP } from "node:net";
+import { BlockList, isIP, type LookupFunction } from "node:net";
 import { z } from "zod";
 
 const suggestion = z.object({
@@ -48,7 +53,13 @@ function isPrivateAddress(address: string, family: 4 | 6) {
   return blockedAddresses.check(address, family === 4 ? "ipv4" : "ipv6");
 }
 
-async function assertPublicUrl(value: string) {
+export async function assertPublicUrl(
+  value: string,
+  lookupHost: (
+    hostname: string,
+  ) => Promise<Array<{ address: string; family: number }>> = (hostname) =>
+    lookup(hostname, { all: true }),
+) {
   const url = new URL(value);
   if (!["http:", "https:"].includes(url.protocol))
     throw new Error("Only HTTP(S) product URLs are supported");
@@ -65,7 +76,7 @@ async function assertPublicUrl(value: string) {
       throw new Error("Private addresses are not allowed");
     return { url, address: hostname, family };
   } else {
-    const addresses = await lookup(hostname, { all: true });
+    const addresses = await lookupHost(hostname);
     if (
       !addresses.length ||
       addresses.some(({ address, family }) =>
@@ -132,11 +143,42 @@ export async function downloadProductImage(imageUrl: string) {
   return fetchPinnedImage(target);
 }
 
-function fetchPinnedHtml(target: Awaited<ReturnType<typeof assertPublicUrl>>) {
+export type PinnedRequestTransport = (
+  url: URL,
+  options: RequestOptions,
+  onResponse: (response: IncomingMessage) => void,
+) => ClientRequest;
+
+function pinnedLookup(
+  target: Awaited<ReturnType<typeof assertPublicUrl>>,
+): LookupFunction {
+  return (_hostname, options, callback) => {
+    if (options.all) {
+      callback(null, [{ address: target.address, family: target.family }]);
+      return;
+    }
+    callback(null, target.address, target.family);
+  };
+}
+
+export function fetchPinnedHtml(
+  target: Awaited<ReturnType<typeof assertPublicUrl>>,
+  options: {
+    maximumBytes?: number;
+    timeoutMs?: number;
+    transport?: PinnedRequestTransport;
+  } = {},
+) {
+  const maximumBytes = options.maximumBytes ?? 1_000_000;
+  const timeoutMs = options.timeoutMs ?? 8_000;
   return new Promise<{ status: number; contentType: string; html: string }>(
     (resolve, reject) => {
       const transport =
-        target.url.protocol === "https:" ? httpsRequest : httpRequest;
+        options.transport ??
+        ((target.url.protocol === "https:"
+          ? httpsRequest
+          : httpRequest) as PinnedRequestTransport);
+      let timeout: ReturnType<typeof setTimeout>;
       const request = transport(
         target.url,
         {
@@ -144,13 +186,12 @@ function fetchPinnedHtml(target: Awaited<ReturnType<typeof assertPublicUrl>>) {
             Accept: "text/html,application/xhtml+xml",
             "User-Agent": "Domino/0.1 product-image-preview",
           },
-          lookup: (_hostname, _options, callback) => {
-            callback(null, target.address, target.family);
-          },
+          lookup: pinnedLookup(target),
         },
         (response) => {
           const status = response.statusCode ?? 500;
           if (status >= 300 && status < 400) {
+            clearTimeout(timeout);
             response.resume();
             reject(new Error("Product page redirects are not followed"));
             return;
@@ -158,7 +199,8 @@ function fetchPinnedHtml(target: Awaited<ReturnType<typeof assertPublicUrl>>) {
           const declaredLength = Number(
             response.headers["content-length"] ?? 0,
           );
-          if (declaredLength > 1_000_000) {
+          if (declaredLength > maximumBytes) {
+            clearTimeout(timeout);
             response.destroy();
             reject(new Error("Product page is too large to inspect safely"));
             return;
@@ -168,7 +210,7 @@ function fetchPinnedHtml(target: Awaited<ReturnType<typeof assertPublicUrl>>) {
           let received = 0;
           response.on("data", (chunk: Buffer) => {
             received += chunk.length;
-            if (received > 1_000_000) {
+            if (received > maximumBytes) {
               response.destroy(
                 new Error("Product page is too large to inspect safely"),
               );
@@ -177,19 +219,27 @@ function fetchPinnedHtml(target: Awaited<ReturnType<typeof assertPublicUrl>>) {
             chunks.push(Buffer.from(chunk));
           });
           response.on("end", () => {
+            clearTimeout(timeout);
             resolve({
               status,
               contentType: String(response.headers["content-type"] ?? ""),
               html: Buffer.concat(chunks).toString("utf8"),
             });
           });
-          response.on("error", reject);
+          response.on("error", (cause) => {
+            clearTimeout(timeout);
+            reject(cause);
+          });
         },
       );
-      request.setTimeout(8_000, () =>
-        request.destroy(new Error("Product page request timed out")),
+      timeout = setTimeout(
+        () => request.destroy(new Error("Product page request timed out")),
+        timeoutMs,
       );
-      request.on("error", reject);
+      request.on("error", (cause) => {
+        clearTimeout(timeout);
+        reject(cause);
+      });
       request.end();
     },
   );
@@ -200,6 +250,7 @@ function fetchPinnedImage(target: Awaited<ReturnType<typeof assertPublicUrl>>) {
     (resolve, reject) => {
       const transport =
         target.url.protocol === "https:" ? httpsRequest : httpRequest;
+      let timeout: ReturnType<typeof setTimeout>;
       const request = transport(
         target.url,
         {
@@ -207,13 +258,12 @@ function fetchPinnedImage(target: Awaited<ReturnType<typeof assertPublicUrl>>) {
             Accept: "image/avif,image/webp,image/png,image/jpeg,image/gif",
             "User-Agent": "Domino/0.1 product-image-fetch",
           },
-          lookup: (_hostname, _options, callback) => {
-            callback(null, target.address, target.family);
-          },
+          lookup: pinnedLookup(target),
         },
         (response) => {
           const status = response.statusCode ?? 500;
           if (status < 200 || status >= 300) {
+            clearTimeout(timeout);
             response.resume();
             reject(new Error(`Product image returned ${status}`));
             return;
@@ -222,6 +272,7 @@ function fetchPinnedImage(target: Awaited<ReturnType<typeof assertPublicUrl>>) {
             response.headers["content-type"] ?? "",
           ).split(";")[0];
           if (!contentType.startsWith("image/")) {
+            clearTimeout(timeout);
             response.resume();
             reject(new Error("Suggested URL did not return an image"));
             return;
@@ -230,6 +281,7 @@ function fetchPinnedImage(target: Awaited<ReturnType<typeof assertPublicUrl>>) {
             response.headers["content-length"] ?? 0,
           );
           if (declaredLength > 10 * 1024 * 1024) {
+            clearTimeout(timeout);
             response.destroy();
             reject(new Error("Product image is larger than 10 MiB"));
             return;
@@ -246,16 +298,24 @@ function fetchPinnedImage(target: Awaited<ReturnType<typeof assertPublicUrl>>) {
             }
             chunks.push(Buffer.from(chunk));
           });
-          response.on("end", () =>
-            resolve({ bytes: Buffer.concat(chunks), contentType }),
-          );
-          response.on("error", reject);
+          response.on("end", () => {
+            clearTimeout(timeout);
+            resolve({ bytes: Buffer.concat(chunks), contentType });
+          });
+          response.on("error", (cause) => {
+            clearTimeout(timeout);
+            reject(cause);
+          });
         },
       );
-      request.setTimeout(10_000, () =>
-        request.destroy(new Error("Product image request timed out")),
+      timeout = setTimeout(
+        () => request.destroy(new Error("Product image request timed out")),
+        10_000,
       );
-      request.on("error", reject);
+      request.on("error", (cause) => {
+        clearTimeout(timeout);
+        reject(cause);
+      });
       request.end();
     },
   );

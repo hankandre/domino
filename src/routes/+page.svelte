@@ -2,12 +2,13 @@
   import {
     ArrowRight,
     CalendarClock,
-    Filter,
     Plus,
     Search,
     SlidersHorizontal,
     X,
   } from "lucide-svelte";
+  import { goto } from "$app/navigation";
+  import Pagination from "$lib/components/Pagination.svelte";
   import ProductCard from "$lib/components/ProductCard.svelte";
   let { data } = $props();
 
@@ -15,54 +16,28 @@
     "all" | "claims" | "expiring" | "active" | "expired" | "unknown";
   type InventorySort = "newest" | "name" | "warranty";
 
+  const inventoryPage = $derived(
+    data.inventoryPage ?? {
+      page: 1,
+      hasMore: false,
+      previousHref: null,
+      nextHref: null,
+      query: "",
+      filter: "all",
+      sort: "newest",
+      total: data.products.length,
+      totalIsExact: true,
+    },
+  );
   let query = $state("");
   let inventoryFilter = $state<InventoryFilter>("all");
   let inventorySort = $state<InventorySort>("newest");
   let filtersOpen = $state(false);
+  let resultAnnouncement = $state("");
   let canCreateProduct = $derived(
     data.actor?.permissions.includes("*") ||
       data.actor?.permissions.includes("products:create") ||
       data.actor?.permissions.includes("warranties:write"),
-  );
-
-  let filteredProducts = $derived(
-    data.products
-      .filter((product) => {
-        const haystack = [
-          product.name,
-          product.brand,
-          product.model,
-          product.category,
-          product.retailer,
-          product.orderNumber,
-          product.purchasedAt,
-          product.warrantyEndsAt ?? "",
-          ...product.serialNumbers,
-          product.activeClaim?.summary ?? "",
-        ]
-          .join(" ")
-          .toLowerCase();
-
-        const matchesQuery = haystack.includes(query.trim().toLowerCase());
-        const matchesFilter =
-          inventoryFilter === "all" ||
-          (inventoryFilter === "claims" && Boolean(product.activeClaim)) ||
-          (inventoryFilter === "expiring" &&
-            product.coverageStatus === "expiring") ||
-          product.coverageStatus === inventoryFilter;
-
-        return matchesQuery && matchesFilter;
-      })
-      .toSorted((a, b) => {
-        if (inventorySort === "name")
-          return `${a.brand} ${a.name}`.localeCompare(`${b.brand} ${b.name}`);
-        if (inventorySort === "warranty") {
-          return (a.warrantyEndsAt ?? "9999-12-31").localeCompare(
-            b.warrantyEndsAt ?? "9999-12-31",
-          );
-        }
-        return b.purchasedAt.localeCompare(a.purchasedAt);
-      }),
   );
 
   const filterLabels: Record<InventoryFilter, string> = {
@@ -73,6 +48,56 @@
     expired: "Expired",
     unknown: "Coverage missing",
   };
+
+  const appliedQuery = $derived(inventoryPage.query);
+  const appliedFilter = $derived(inventoryPage.filter);
+  const hasAppliedSearch = $derived(
+    Boolean(appliedQuery || appliedFilter !== "all"),
+  );
+
+  function inventoryHref(
+    nextQuery: string,
+    nextFilter: InventoryFilter,
+    nextSort: InventorySort,
+  ) {
+    const parameters = new URLSearchParams();
+    if (nextQuery) parameters.set("q", nextQuery);
+    if (nextFilter !== "all") parameters.set("filter", nextFilter);
+    if (nextSort !== "newest") parameters.set("sort", nextSort);
+    const queryString = parameters.toString();
+    return queryString ? `/?${queryString}` : "/";
+  }
+
+  const clearAppliedFilterHref = $derived(
+    inventoryHref(appliedQuery, "all", inventoryPage.sort),
+  );
+  const clearAppliedQueryHref = $derived(
+    inventoryHref("", appliedFilter, inventoryPage.sort),
+  );
+
+  const resultDescription = $derived(
+    inventoryPage.total === null
+      ? `${data.products.length} ${data.products.length === 1 ? "record" : "records"} on this page`
+      : `${inventoryPage.total} ${inventoryPage.total === 1 ? "record" : "records"}${appliedQuery ? ` matching “${appliedQuery}”` : ""}`,
+  );
+
+  async function clearSearch() {
+    query = "";
+    if (!appliedQuery) return;
+    await goto(clearAppliedQueryHref);
+  }
+
+  $effect(() => {
+    query = data.inventoryPage?.query ?? "";
+    inventoryFilter = data.inventoryPage?.filter ?? "all";
+    inventorySort = data.inventoryPage?.sort ?? "newest";
+  });
+
+  $effect(() => {
+    const description = resultDescription;
+    const timer = setTimeout(() => (resultAnnouncement = description), 350);
+    return () => clearTimeout(timer);
+  });
 </script>
 
 <svelte:head><title>Inventory · Domino</title></svelte:head>
@@ -89,7 +114,9 @@
           class="mb-2 flex items-center gap-2 text-xs font-bold tracking-[0.07em] text-muted uppercase"
         >
           <span class="inline-block h-px w-7 bg-orange"></span>
-          Household inventory · {data.products.length} products
+          Household inventory · {inventoryPage.total === null
+            ? `${data.products.length} on this page`
+            : `${inventoryPage.total}${inventoryPage.totalIsExact ? "" : "+"} products`}
         </p>
         <h1
           class="max-w-3xl text-[clamp(1.78rem,3.8vw,3.5rem)] leading-[0.95] font-bold tracking-[-0.04em] text-balance"
@@ -108,22 +135,33 @@
     </div>
 
     <div class="mt-5 grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto]">
-      <label
-        class="group flex min-h-12 items-center gap-3 border border-ink bg-sheet px-4 focus-within:shadow-[0_4px_0_#e65322]"
+      <form
+        method="GET"
+        class="group flex min-h-12 items-center gap-3 border border-ink bg-sheet px-4 focus-within:shadow-[0_4px_0_var(--color-orange)]"
       >
-        <Search size={22} strokeWidth={1.8} class="shrink-0" />
-        <span class="sr-only">Search household inventory</span>
+        <Search
+          size={22}
+          strokeWidth={1.8}
+          class="shrink-0"
+          aria-hidden="true"
+        />
+        <label class="sr-only" for="inventory-search"
+          >Search household inventory</label
+        >
         <input
+          id="inventory-search"
+          name="q"
           bind:value={query}
-          class="min-w-0 flex-1 bg-transparent text-base font-semibold outline-none placeholder:text-muted/80"
+          class="min-h-11 min-w-0 flex-1 bg-transparent text-base font-semibold outline-none placeholder:text-muted/80"
           placeholder="Product, date, serial, retailer, claim…"
           autocomplete="off"
         />
         {#if query}
           <button
-            class="relative z-20 grid size-9 place-items-center text-muted hover:text-ink"
+            type="button"
+            class="relative z-20 grid size-11 shrink-0 place-items-center text-muted hover:text-ink"
             aria-label="Clear search"
-            onclick={() => (query = "")}
+            onclick={clearSearch}
           >
             <X size={17} />
           </button>
@@ -133,7 +171,14 @@
             >/</kbd
           >
         {/if}
-      </label>
+        <input type="hidden" name="filter" value={inventoryFilter} />
+        <input type="hidden" name="sort" value={inventorySort} />
+        <button
+          type="submit"
+          class="min-h-11 shrink-0 bg-ink px-4 text-xs font-bold text-white hover:bg-orange"
+          >Search all</button
+        >
+      </form>
 
       <button
         class="flex min-h-11 items-center justify-center gap-2 border border-rule bg-sheet px-5 text-sm font-bold hover:border-ink xl:min-h-12"
@@ -177,7 +222,7 @@
       >
       <span class="min-w-0">
         <span
-          class="block text-xs font-bold tracking-[0.055em] text-[#963714] uppercase"
+          class="block text-xs font-bold tracking-[0.055em] text-orange-ink uppercase"
           >Open claims</span
         >
         <span class="mt-1 block text-sm leading-tight font-bold lg:text-base"
@@ -217,11 +262,13 @@
   </section>
 
   {#if filtersOpen}
-    <section
+    <form
+      method="GET"
       id="inventory-filters"
       class="grid gap-5 border-b border-rule bg-sheet px-4 py-5 sm:grid-cols-[minmax(0,1fr)_240px] sm:px-5"
       aria-label="Inventory filters and sorting"
     >
+      <input type="hidden" name="q" value={query} />
       <fieldset>
         <legend
           class="text-xs font-bold tracking-[0.055em] text-muted uppercase"
@@ -230,7 +277,7 @@
         <div class="mt-3 flex flex-wrap gap-2">
           {#each Object.entries(filterLabels) as [value, label]}
             <label
-              class="flex min-h-10 cursor-pointer items-center border px-3 text-sm font-bold transition-colors"
+              class="flex min-h-11 cursor-pointer items-center border px-3 text-sm font-bold transition-colors"
               class:border-ink={inventoryFilter === value}
               class:bg-ink={inventoryFilter === value}
               class:text-white={inventoryFilter === value}
@@ -240,7 +287,7 @@
               <input
                 class="sr-only"
                 type="radio"
-                name="inventory-filter"
+                name="filter"
                 {value}
                 bind:group={inventoryFilter}
               />
@@ -256,14 +303,22 @@
         >
         <select
           bind:value={inventorySort}
-          class="mt-3 min-h-10 w-full border border-rule bg-paper px-3 text-sm font-bold focus:border-ink"
+          name="sort"
+          class="mt-3 min-h-11 w-full border border-rule bg-paper px-3 text-sm font-bold focus:border-ink"
         >
           <option value="newest">Newest purchase</option>
           <option value="name">Product name</option>
           <option value="warranty">Warranty end date</option>
         </select>
       </label>
-    </section>
+      <div class="flex items-end sm:col-span-2">
+        <button
+          type="submit"
+          class="min-h-11 bg-ink px-5 text-sm font-bold text-white hover:bg-orange"
+          >Apply to all products</button
+        >
+      </div>
+    </form>
   {/if}
 
   <section class="pt-5" aria-labelledby="inventory-heading">
@@ -275,51 +330,41 @@
         >
           Household inventory
         </h2>
-        <p
-          class="mt-1 text-sm text-muted"
-          role="status"
-          aria-live="polite"
-          aria-atomic="true"
-        >
-          {filteredProducts.length}
-          {filteredProducts.length === 1 ? "record" : "records"}
-          {query ? ` matching “${query}”` : ""}
+        <p class="mt-1 text-sm text-muted" aria-hidden="true">
+          {resultDescription}
         </p>
+        <p class="sr-only" role="status" aria-live="polite" aria-atomic="true">
+          {resultAnnouncement}
+        </p>
+        {#if !inventoryPage.totalIsExact}
+          <p class="mt-1 max-w-2xl text-xs text-muted">
+            {hasAppliedSearch
+              ? "Fuzzy results are ranked from a bounded candidate set. Use a serial, order number, or a narrower name for the best match."
+              : "Browse every household record with the page controls below."}
+          </p>
+        {/if}
       </div>
       <div class="flex items-center gap-2">
-        {#if inventoryFilter !== "all"}
-          <button
-            class="flex min-h-10 items-center gap-2 border border-ink bg-sheet px-3 text-xs font-bold"
-            aria-label={`Remove ${filterLabels[inventoryFilter]} filter`}
-            onclick={() => (inventoryFilter = "all")}
+        {#if appliedFilter !== "all"}
+          <a
+            href={clearAppliedFilterHref}
+            class="flex min-h-11 items-center gap-2 border border-ink bg-sheet px-3 text-xs font-bold"
+            aria-label={`Remove ${filterLabels[appliedFilter]} filter`}
           >
-            {filterLabels[inventoryFilter]}
+            {filterLabels[appliedFilter]}
             <X size={14} />
-          </button>
+          </a>
         {/if}
-        <button
-          class="flex min-h-10 items-center gap-2 border border-rule bg-sheet px-3 text-xs font-bold hover:border-ink"
-          aria-expanded={filtersOpen}
-          aria-controls="inventory-filters"
-          onclick={() => (filtersOpen = !filtersOpen)}
-        >
-          <Filter size={15} />
-          {inventorySort === "newest"
-            ? "Newest purchase"
-            : inventorySort === "name"
-              ? "Product name"
-              : "Warranty end date"}
-        </button>
       </div>
     </div>
 
-    {#if filteredProducts.length}
+    {#if data.products.length}
       <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {#each filteredProducts as product (product.id)}
+        {#each data.products as product (product.id)}
           <ProductCard {product} />
         {/each}
       </div>
-    {:else if data.products.length === 0}
+    {:else if !hasAppliedSearch && inventoryPage.page === 1}
       <div
         class="grid min-h-80 place-items-center border border-dashed border-muted/60 bg-sheet p-8 text-center"
       >
@@ -354,17 +399,20 @@
             Try a product name, manufacturer, serial number, retailer, or date
             such as “2025.”
           </p>
-          <button
-            class="mt-5 min-h-11 bg-ink px-4 text-sm font-bold text-white"
-            onclick={() => {
-              query = "";
-              inventoryFilter = "all";
-            }}
+          <a
+            href="/"
+            class="mt-5 inline-flex min-h-11 items-center bg-ink px-4 text-sm font-bold text-white"
           >
             Clear search and filters
-          </button>
+          </a>
         </div>
       </div>
     {/if}
+    <Pagination
+      page={inventoryPage.page}
+      previousHref={inventoryPage.previousHref}
+      nextHref={inventoryPage.nextHref}
+      label="inventory"
+    />
   </section>
 </div>

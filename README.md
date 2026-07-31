@@ -2,7 +2,7 @@
 
 Domino is a self-hosted household warranty tracker for products, coverage, manuals, receipts, notes, and claims. It can store documents itself or defer to Paperless-ngx as the authoritative document store. A typed Hono API and CLI make the same records available to humans and restricted agents.
 
-The `0.1.1` household MVP persists products, warranties, structured claim instructions, notes, claims and timelines, document references, images, people, roles, sessions, invitations, and service credentials in PostgreSQL. Compose defaults demo mode off and binds to loopback; the development environment can still use the explicit demo dataset.
+The `0.2.0` household MVP persists products, warranties, structured claim instructions, notes, claims and timelines, document references, images, people, roles, sessions, invitations, and service credentials in PostgreSQL. Compose defaults demo mode off and binds to loopback; the development environment can still use the explicit demo dataset.
 
 ## Stack
 
@@ -16,10 +16,13 @@ The `0.1.1` household MVP persists products, warranties, structured claim instru
 
 ```sh
 bun install
-bun run dev
+DOMINO_DEMO_MODE=true bun run dev
 ```
 
-The demo inventory is available at `http://localhost:5173`. Validate with:
+The explicit, unauthenticated demo inventory is available at
+`http://localhost:5173` and must remain loopback-only. For persistent development,
+start PostgreSQL, export `DATABASE_URL`, run `bun run db:migrate`, generate a
+session secret, and bootstrap a local owner instead. Validate with:
 
 ```sh
 bun run check
@@ -37,6 +40,7 @@ mkdir -p secrets
 touch secrets/paperless_token
 touch secrets/oidc_client_secret
 openssl rand -base64 48 > secrets/session_secret
+openssl rand -base64 48 > secrets/credential_encryption_key
 cp .env.example .env
 # Replace POSTGRES_PASSWORD in .env with another independently generated value.
 docker compose up --build
@@ -44,14 +48,16 @@ docker compose up --build
 
 Compose binds Domino to `127.0.0.1` by default, which is appropriate for local evaluation and a same-host reverse proxy. Set `DOMINO_BIND_ADDRESS` deliberately if the container must listen on another host interface. Demo mode is disabled unless `DOMINO_DEMO_MODE=true`; because it is unauthenticated, enable it only on loopback for deliberate evaluation.
 
+Domino uses SvelteKit's server-derived client address for sign-in and public-device throttling. Behind a trusted reverse proxy, set `ADDRESS_HEADER=x-forwarded-for` and `XFF_DEPTH` to the exact number of trusted hops only when the application port cannot be reached except through that proxy and the proxy overwrites the header. Never trust forwarded-address headers from arbitrary clients. Without this configuration, Domino deliberately uses the direct peer address; login limits remain isolated by email so one shared proxy address cannot lock out every household member.
+
 The Domino application and migration containers start directly as UID/GID `10001`. They never start as root, call `su`, or change identity. The bundled PostgreSQL service also starts directly as its image's numeric UID/GID `70`, rather than starting as root and dropping privileges. Migrations run in the separate `migrate` service before the app becomes eligible to start. Runtime root filesystems are read-only; only the explicitly mounted data and temporary paths are writable. The Docker build context excludes `.env`, `secrets/`, and application data.
 
 The browser application and Rust CLI are separate images:
 
 ```text
-ghcr.io/hankandre/domino:0.1.1
-ghcr.io/hankandre/domino-migrate:0.1.1
-ghcr.io/hankandre/domino-cli:0.1.1
+ghcr.io/hankandre/domino:0.2.0
+ghcr.io/hankandre/domino-migrate:0.2.0
+ghcr.io/hankandre/domino-cli:0.2.0
 ```
 
 The web and migration targets use pinned Node.js Distroless Debian images. The statically linked Rust CLI/broker uses a pinned static Distroless Debian image. They contain no shell or package manager. Application production dependencies and migration tooling are installed into separate targets, and every first-party runtime starts directly as UID/GID `10001`.
@@ -123,7 +129,9 @@ Domino supports any standards-compliant OIDC provider and uses Pocket ID as the 
    DOMINO_OIDC_BOOTSTRAP_OWNER_EMAIL=you@example.test
    ```
 
-On the first successful login, the exact verified bootstrap email creates the initial household, the built-in Owner and Member roles, and the first Owner account. Later verified users are assigned the configurable `Member` role. Existing accounts are not silently claimed by email: an administrator must explicitly link the OIDC identity. `DOMINO_OIDC_LINK_EXISTING_BY_EMAIL=true` is available only for a controlled migration where verified email ownership is known to be authoritative.
+On the first successful login, the exact verified bootstrap email creates the initial household, the built-in Owner and Member roles, and the first Owner account. Later verified users are auto-provisioned by default and assigned the configurable `Member` role. Set `DOMINO_OIDC_DEFAULT_CLAIM_PRESET` to `all`, `open`, `attention`, or `none` to choose their initial claim set; the default is `all`. The bootstrap owner always receives all-claim access. A selected preset is resolved once when the account is provisioned, after which an administrator can adjust the exact selection under People & agents.
+
+Set `DOMINO_OIDC_AUTO_PROVISION=false` to require pre-existing household access. Existing accounts are not silently claimed by email: an administrator must explicitly link the OIDC identity. `DOMINO_OIDC_LINK_EXISTING_BY_EMAIL=true` is available only for a controlled migration where verified email ownership is known to be authoritative.
 
 `DOMINO_OIDC_ALLOWED_GROUPS` accepts a comma-separated Pocket ID group allowlist. Leave it empty to rely on Pocket ID's client access policy. Domino always applies its own household RBAC after authentication, so an allowed Pocket ID user receives only the permissions of their Domino role.
 
@@ -142,7 +150,7 @@ cargo install --git https://github.com/hankandre/domino domino-cli
 Tagged GitHub releases publish static Linux x86_64 and ARM64 archives with SHA-256 checksum files. The same release publishes a multi-architecture CLI image independently from the browser application:
 
 ```sh
-docker run --rm ghcr.io/hankandre/domino-cli:0.1.1 --version
+docker run --rm ghcr.io/hankandre/domino-cli:0.2.0 --version
 ```
 
 For a persistent human-operated CLI using Compose:
@@ -164,7 +172,8 @@ domino product create "Artisan Mixer" --brand KitchenAid --model KSM195 \
   --category "Kitchen appliance" --order-number ORDER-9921
 domino product get PRODUCT_ID
 domino warranty add PRODUCT_ID --provider KitchenAid --ends-at 2027-07-01 \
-  --claim-deadline 2027-06-15 --instruction "Attach the receipt"
+  --claim-deadline 2027-06-15 --submission-method web \
+  --required-evidence "Proof of purchase" --instruction "Submit the web form"
 domino claim create PRODUCT_ID --issue "Leaking from the lower seal" \
   --noticed-at 2026-07-28 --preferred-resolution repair
 domino note add PRODUCT_ID "Bosch requested a seal photo."
@@ -225,7 +234,7 @@ docker compose --profile broker run --rm agent-cli search "dishwasher"
 
 Production device codes, service actors, roles, hashed credentials, and revocation state are persisted in PostgreSQL. Each bearer request checks the database, so revoking the account or credential immediately cuts off the broker. Requested grants are validated against Domino’s permission vocabulary and may not exceed the approving user’s own permissions.
 
-`DELETE /api/v1/service-accounts/:actorId` revokes every credential for a household service account, disables the actor, and writes an audit event. Device starts are capped by `DOMINO_DEVICE_FLOW_MAX_OUTSTANDING`; expired and consumed flows are pruned. Internet-facing deployments should additionally rate-limit `/api/device/start` at the ingress or reverse proxy.
+`DELETE /api/v1/service-accounts/:actorId` revokes every credential for a household service account, disables the actor, and writes an audit event. Device enrollment, approval, token polling, invitations, password resets, outbound image work, Paperless searches, and product searches have bounded in-process limits; device starts are also capped by `DOMINO_DEVICE_FLOW_MAX_OUTSTANDING`, and expired or consumed flows are pruned. These limits are per application replica, so internet-facing deployments should enforce equivalent limits at the ingress or reverse proxy as well.
 
 ## Permission model
 
@@ -242,7 +251,18 @@ An administrator can also give any human or service account access to all househ
 - `GET /api/health` is the process liveness check.
 - `GET /api/ready` verifies PostgreSQL and writable local storage. Paperless is reported but intentionally does not make the whole app unready.
 - `GET /api/docs` serves a self-hosted Swagger UI with no CDN dependency.
-- `GET /api/openapi.json` publishes the Swagger UI's OpenAPI 3.1 document. Browser calls use the Hono contract directly; the Rust CLI uses the stable `/api/v1` HTTP surface.
+- `GET /api/openapi.json` publishes the Swagger UI's complete OpenAPI 3.1 document. Browser JSON calls use the typed Hono RPC client; bounded raw document and image streams use `fetch` because their request bodies are intentionally streamed. The independently released Rust CLI uses the stable `/api/v1` HTTP surface.
+
+## Documentation
+
+- [Deployment and upgrades](docs/deployment.md)
+- [Backup and restore](docs/backup-restore.md)
+- [Secrets and rotation](docs/secrets.md)
+- [CLI installation and operation](docs/cli.md)
+- [Architecture and decisions](docs/architecture.md)
+- [Release verification](docs/release-verification.md)
+- [0.2.0 release-candidate checklist](docs/release-candidate-0.2.0.md)
+- [Security policy](SECURITY.md) and [contribution guide](CONTRIBUTING.md)
 
 ## Scope
 

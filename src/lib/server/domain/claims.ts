@@ -1,8 +1,14 @@
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import * as schema from "../db/schema";
+import {
+  MAX_LIST_LIMIT,
+  normalizeListWindow,
+  type ListWindow,
+} from "../pagination";
 
 type Database = NodePgDatabase<typeof schema>;
+const MAX_CLAIM_RELATED_RECORDS = 200;
 
 export type ClaimRelatedReadAccess = {
   documents: boolean;
@@ -37,9 +43,11 @@ export function projectClaimRelatedData<
 export async function listClaims(
   db: Database,
   householdId: string,
-  claimIds?: string[],
+  claimIds?: readonly string[],
+  window?: ListWindow,
 ) {
   if (claimIds?.length === 0) return [];
+  const { limit, offset } = normalizeListWindow(window, MAX_LIST_LIMIT + 1);
   const rows = await db
     .select({
       claim: schema.claims,
@@ -58,7 +66,9 @@ export async function listClaims(
           : inArray(schema.claims.id, claimIds),
       ),
     )
-    .orderBy(desc(schema.claims.updatedAt));
+    .orderBy(desc(schema.claims.updatedAt), desc(schema.claims.id))
+    .limit(limit)
+    .offset(offset);
   return rows.map(({ claim, productName, productBrand, productModel }) => ({
     ...claim,
     product: {
@@ -69,12 +79,68 @@ export async function listClaims(
   }));
 }
 
+export async function getClaimIdentity(
+  db: Database,
+  householdId: string,
+  claimId: string,
+  claimIds?: readonly string[],
+) {
+  if (claimIds && !claimIds.includes(claimId)) return null;
+  const [claim] = await db
+    .select({
+      id: schema.claims.id,
+      productId: schema.claims.productId,
+      reference: schema.claims.reference,
+      resolution: schema.claims.resolution,
+    })
+    .from(schema.claims)
+    .where(
+      and(
+        eq(schema.claims.id, claimId),
+        eq(schema.claims.householdId, householdId),
+      ),
+    )
+    .limit(1);
+  return claim ?? null;
+}
+
+export async function listClaimNotes(
+  db: Database,
+  householdId: string,
+  claimId: string,
+  window?: ListWindow,
+) {
+  const { limit, offset } = normalizeListWindow(
+    window,
+    MAX_CLAIM_RELATED_RECORDS + 1,
+  );
+  return db
+    .select({
+      id: schema.notes.id,
+      body: schema.notes.body,
+      createdAt: schema.notes.createdAt,
+      updatedAt: schema.notes.updatedAt,
+      authorName: schema.actors.name,
+    })
+    .from(schema.notes)
+    .leftJoin(schema.actors, eq(schema.notes.authorActorId, schema.actors.id))
+    .where(
+      and(
+        eq(schema.notes.claimId, claimId),
+        eq(schema.notes.householdId, householdId),
+      ),
+    )
+    .orderBy(desc(schema.notes.createdAt), desc(schema.notes.id))
+    .limit(limit)
+    .offset(offset);
+}
+
 export async function getClaim(
   db: Database,
   householdId: string,
   claimId: string,
   access: ClaimRelatedReadAccess,
-  claimIds?: string[],
+  claimIds?: readonly string[],
 ) {
   if (claimIds && !claimIds.includes(claimId)) return null;
   const [row] = await db
@@ -109,7 +175,8 @@ export async function getClaim(
       .from(schema.claimEvents)
       .leftJoin(schema.actors, eq(schema.claimEvents.actorId, schema.actors.id))
       .where(eq(schema.claimEvents.claimId, claimId))
-      .orderBy(schema.claimEvents.occurredAt),
+      .orderBy(schema.claimEvents.occurredAt, schema.claimEvents.id)
+      .limit(MAX_CLAIM_RELATED_RECORDS + 1),
     access.notes
       ? db
           .select({
@@ -130,7 +197,8 @@ export async function getClaim(
               eq(schema.notes.householdId, householdId),
             ),
           )
-          .orderBy(desc(schema.notes.createdAt))
+          .orderBy(desc(schema.notes.createdAt), desc(schema.notes.id))
+          .limit(MAX_CLAIM_RELATED_RECORDS + 1)
       : Promise.resolve([]),
     access.documents
       ? db
@@ -143,11 +211,26 @@ export async function getClaim(
               isNull(schema.documents.trashedAt),
             ),
           )
+          .orderBy(desc(schema.documents.createdAt), desc(schema.documents.id))
+          .limit(MAX_CLAIM_RELATED_RECORDS + 1)
       : Promise.resolve([]),
     db
       .select()
       .from(schema.warranties)
-      .where(eq(schema.warranties.productId, row.claim.productId)),
+      .where(
+        row.claim.warrantyId
+          ? and(
+              eq(schema.warranties.id, row.claim.warrantyId),
+              eq(schema.warranties.productId, row.claim.productId),
+            )
+          : eq(schema.warranties.productId, row.claim.productId),
+      )
+      .orderBy(
+        desc(schema.warranties.lifetime),
+        desc(schema.warranties.endsAt),
+        desc(schema.warranties.id),
+      )
+      .limit(1),
   ]);
   const warranty =
     warrantyRows.find((item) => item.id === row.claim.warrantyId) ??
@@ -161,10 +244,15 @@ export async function getClaim(
         brand: row.productBrand,
         model: row.productModel,
       },
-      events,
-      notes,
-      documents,
+      events: events.slice(0, MAX_CLAIM_RELATED_RECORDS),
+      notes: notes.slice(0, MAX_CLAIM_RELATED_RECORDS),
+      documents: documents.slice(0, MAX_CLAIM_RELATED_RECORDS),
       warranty,
+      relatedPage: {
+        eventsTruncated: events.length > MAX_CLAIM_RELATED_RECORDS,
+        notesTruncated: notes.length > MAX_CLAIM_RELATED_RECORDS,
+        documentsTruncated: documents.length > MAX_CLAIM_RELATED_RECORDS,
+      },
     },
     access,
   );
@@ -234,6 +322,15 @@ export async function createClaim(
         .insert(schema.actorClaimAccess)
         .values({ actorId, claimId: claim.id, grantedByActorId: actorId })
         .onConflictDoNothing();
+      await tx.insert(schema.auditEvents).values({
+        householdId,
+        actorId,
+        action: "claim.access.self_grant",
+        resourceType: "claim",
+        resourceId: claim.id,
+        summary: `Granted the creating account access to ${reference}`,
+        metadata: { actorId },
+      });
     }
     await tx.insert(schema.claimEvents).values({
       claimId: claim.id,

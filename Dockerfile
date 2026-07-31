@@ -45,6 +45,7 @@ COPY --from=build --chown=10001:10001 /app/package.json ./package.json
 COPY --from=build --chown=10001:10001 /app/drizzle ./drizzle
 COPY --from=build --chown=10001:10001 /app/drizzle.config.ts ./drizzle.config.ts
 COPY --from=build --chown=10001:10001 /app/src/lib/server/db/schema.ts ./src/lib/server/db/schema.ts
+COPY --from=build --chown=10001:10001 /app/src/lib/server/auth/role-catalog.mjs ./src/lib/server/auth/role-catalog.mjs
 COPY --from=build --chown=10001:10001 /app/scripts ./scripts
 USER 10001:10001
 CMD ["node_modules/drizzle-kit/bin.cjs", "migrate", "--config=drizzle.config.ts"]

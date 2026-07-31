@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import process from "node:process";
 import { hash } from "@node-rs/argon2";
 import pg from "pg";
+import { roleTemplates } from "../src/lib/server/auth/role-catalog.mjs";
 
 function argument(name) {
   const index = process.argv.indexOf(name);
@@ -24,82 +25,13 @@ if (password.length < 12) {
   process.exit(2);
 }
 
-const ownerPermissions = [
-  "products:read",
-  "products:create",
-  "products:manage",
-  "warranties:read",
-  "warranties:create",
-  "warranties:manage",
-  "claims:read",
-  "claims:create",
-  "claims:manage",
-  "documents:read",
-  "documents:attach",
-  "documents:manage",
-  "images:attach",
-  "paperless:discover",
-  "notes:read",
-  "notes:write",
-  "household:manage",
-  "integrations:manage",
-  "service_accounts:manage",
-  "audit:read",
-];
-const memberPermissions = ownerPermissions.filter(
-  (permission) =>
-    ![
-      "household:manage",
-      "integrations:manage",
-      "service_accounts:manage",
-      "audit:read",
-    ].includes(permission),
-);
-const agentReaderPermissions = [
-  "products:read",
-  "warranties:read",
-  "claims:read",
-  "documents:read",
-  "notes:read",
-];
-const claimAssistantPermissions = [
-  "products:read",
-  "warranties:read",
-  "claims:read",
-  "claims:create",
-  "claims:manage",
-  "documents:read",
-  "documents:attach",
-  "notes:read",
-  "notes:write",
-];
-const inventoryContributorPermissions = [
-  "products:read",
-  "products:create",
-  "warranties:read",
-  "warranties:create",
-  "documents:read",
-  "documents:attach",
-  "images:attach",
-  "notes:read",
-  "notes:write",
-];
-const householdAgentPermissions = [
-  "products:read",
-  "products:create",
-  "products:manage",
-  "warranties:read",
-  "warranties:create",
-  "warranties:manage",
-  "claims:read",
-  "claims:create",
-  "claims:manage",
-  "documents:read",
-  "documents:attach",
-  "documents:manage",
-  "images:attach",
-  "notes:read",
-  "notes:write",
+const bootstrapRoleTemplates = [
+  roleTemplates.owner,
+  roleTemplates.member,
+  roleTemplates["agent-reader"],
+  roleTemplates["claim-assistant"],
+  roleTemplates["inventory-contributor"],
+  roleTemplates["household-agent"],
 ];
 
 const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
@@ -128,26 +60,24 @@ try {
     ],
   );
   const householdId = household.rows[0].id;
-  const roleRows = await client.query(
-    `insert into roles (household_id, name, description, permissions, system)
-     values ($1, 'Owner', 'Full control of the household and its integrations.', $2::jsonb, true),
-            ($1, 'Member', 'Manage products, documents, notes, and claims.', $3::jsonb, true),
-            ($1, 'Agent Reader', 'Find coverage and supporting material without changing records.', $4::jsonb, true),
-            ($1, 'Claim Assistant', 'Find products and help prepare or manage claims.', $5::jsonb, true),
-            ($1, 'Inventory Contributor', 'Add household products and supporting material without changing existing records.', $6::jsonb, true),
-            ($1, 'Household Agent', 'Manage household products, coverage, documents, notes, and claims without security administration.', $7::jsonb, true)
-     returning id, name`,
-    [
-      householdId,
-      JSON.stringify(ownerPermissions),
-      JSON.stringify(memberPermissions),
-      JSON.stringify(agentReaderPermissions),
-      JSON.stringify(claimAssistantPermissions),
-      JSON.stringify(inventoryContributorPermissions),
-      JSON.stringify(householdAgentPermissions),
-    ],
-  );
-  const ownerRoleId = roleRows.rows.find((row) => row.name === "Owner").id;
+  const insertedRoles = [];
+  for (const template of bootstrapRoleTemplates) {
+    const result = await client.query(
+      `insert into roles (household_id, name, description, permissions, system)
+       values ($1, $2, $3, $4::jsonb, true)
+       returning id, name`,
+      [
+        householdId,
+        template.name,
+        template.description,
+        JSON.stringify(template.permissions),
+      ],
+    );
+    insertedRoles.push(result.rows[0]);
+  }
+  const ownerRoleId = insertedRoles.find(
+    (row) => row.name === roleTemplates.owner.name,
+  ).id;
   const passwordHash = await hash(password, {
     algorithm: 2,
     memoryCost: 19456,

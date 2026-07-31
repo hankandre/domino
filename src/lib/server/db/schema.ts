@@ -1,5 +1,6 @@
 import {
   boolean,
+  check,
   date,
   index,
   integer,
@@ -13,6 +14,11 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+import type {
+  ClaimInstruction,
+  RequiredEvidence,
+  SubmissionMethod,
+} from "../../claim-guidance";
 
 export const actorKind = pgEnum("actor_kind", ["user", "service"]);
 export const documentBackend = pgEnum("document_backend", [
@@ -130,22 +136,33 @@ export const roles = pgTable(
   ],
 );
 
-export const actors = pgTable("actors", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  householdId: uuid("household_id")
-    .notNull()
-    .references(() => households.id, { onDelete: "cascade" }),
-  kind: actorKind("kind").notNull(),
-  userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
-  name: text("name").notNull(),
-  claimAccessScope: text("claim_access_scope")
-    .$type<"all" | "selected">()
-    .notNull()
-    .default("all"),
-  disabled: boolean("disabled").notNull().default(false),
-  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
-  ...timestamps,
-});
+export const actors = pgTable(
+  "actors",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    householdId: uuid("household_id")
+      .notNull()
+      .references(() => households.id, { onDelete: "cascade" }),
+    kind: actorKind("kind").notNull(),
+    userId: uuid("user_id").references(() => users.id, {
+      onDelete: "cascade",
+    }),
+    name: text("name").notNull(),
+    claimAccessScope: text("claim_access_scope")
+      .$type<"all" | "selected">()
+      .notNull()
+      .default("all"),
+    disabled: boolean("disabled").notNull().default(false),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    check(
+      "actors_claim_access_scope_check",
+      sql`${table.claimAccessScope} in ('all', 'selected')`,
+    ),
+  ],
+);
 
 export const actorRoles = pgTable(
   "actor_roles",
@@ -228,6 +245,11 @@ export const userInvitations = pgTable(
     invitedByActorId: uuid("invited_by_actor_id").references(() => actors.id, {
       onDelete: "set null",
     }),
+    claimAccessScope: text("claim_access_scope")
+      .$type<"all" | "selected">()
+      .notNull()
+      .default("selected"),
+    claimIds: jsonb("claim_ids").$type<string[]>().notNull().default([]),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     acceptedAt: timestamp("accepted_at", { withTimezone: true }),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
@@ -240,6 +262,10 @@ export const userInvitations = pgTable(
     index("user_invitations_household_email_idx").on(
       table.householdId,
       table.email,
+    ),
+    check(
+      "user_invitations_claim_access_scope_check",
+      sql`${table.claimAccessScope} in ('all', 'selected')`,
     ),
   ],
 );
@@ -293,6 +319,33 @@ export const products = pgTable(
   (table) => [
     index("products_household_idx").on(table.householdId),
     index("products_household_name_idx").on(table.householdId, table.name),
+    index("products_household_normalized_name_idx").on(
+      table.householdId,
+      sql`lower(regexp_replace(trim(coalesce(${table.name}, '')), '[[:space:]]+', ' ', 'g'))`,
+    ),
+    index("products_household_brand_model_idx").on(
+      table.householdId,
+      sql`lower(regexp_replace(trim(coalesce(${table.brand}, '')), '[[:space:]]+', ' ', 'g'))`,
+      sql`lower(regexp_replace(trim(coalesce(${table.model}, '')), '[[:space:]]+', ' ', 'g'))`,
+    ),
+    index("products_household_order_identity_idx").on(
+      table.householdId,
+      sql`lower(regexp_replace(trim(coalesce(${table.retailer}, '')), '[[:space:]]+', ' ', 'g'))`,
+      sql`lower(regexp_replace(trim(coalesce(${table.orderNumber}, '')), '[[:space:]]+', ' ', 'g'))`,
+      sql`lower(regexp_replace(trim(coalesce(${table.brand}, '')), '[[:space:]]+', ' ', 'g'))`,
+      sql`lower(regexp_replace(trim(coalesce(${table.model}, '')), '[[:space:]]+', ' ', 'g'))`,
+    ),
+    index("products_household_purchase_idx").on(
+      table.householdId,
+      table.purchaseDate,
+    ),
+    index("products_household_archive_idx").on(
+      table.householdId,
+      table.archivedAt,
+    ),
+    index("products_household_active_updated_idx")
+      .on(table.householdId, table.updatedAt, table.id)
+      .where(sql`${table.archivedAt} is null`),
   ],
 );
 
@@ -326,6 +379,15 @@ export const productSources = pgTable(
       .where(
         sql`${table.externalSystem} is not null and ${table.externalId} is not null`,
       ),
+    index("product_sources_household_normalized_external_idx")
+      .on(
+        table.householdId,
+        sql`lower(regexp_replace(trim(coalesce(${table.externalSystem}, '')), '[[:space:]]+', ' ', 'g'))`,
+        sql`upper(regexp_replace(coalesce(${table.externalId}, ''), '[^A-Za-z0-9]', '', 'g'))`,
+      )
+      .where(
+        sql`${table.externalSystem} is not null and ${table.externalId} is not null`,
+      ),
   ],
 );
 
@@ -342,7 +404,17 @@ export const productSerials = pgTable(
       .notNull()
       .defaultNow(),
   },
-  (table) => [index("product_serials_value_idx").on(table.value)],
+  (table) => [
+    index("product_serials_product_created_idx").on(
+      table.productId,
+      table.createdAt,
+      table.id,
+    ),
+    index("product_serials_value_idx").on(table.value),
+    index("product_serials_normalized_value_idx").on(
+      sql`upper(regexp_replace(coalesce(${table.value}, ''), '[^A-Za-z0-9]', '', 'g'))`,
+    ),
+  ],
 );
 
 export const warranties = pgTable(
@@ -363,33 +435,56 @@ export const warranties = pgTable(
     claimEmail: text("claim_email"),
     eligibilityNotes: text("eligibility_notes"),
     claimDeadline: date("claim_deadline"),
+    submissionMethods: jsonb("submission_methods")
+      .$type<SubmissionMethod[]>()
+      .notNull()
+      .default([]),
+    requiredEvidence: jsonb("required_evidence")
+      .$type<RequiredEvidence[]>()
+      .notNull()
+      .default([]),
     claimInstructions: jsonb("claim_instructions")
-      .$type<Array<{ title: string; detail?: string; required: boolean }>>()
+      .$type<ClaimInstruction[]>()
       .notNull()
       .default([]),
     ...timestamps,
   },
-  (table) => [index("warranties_product_idx").on(table.productId)],
+  (table) => [
+    index("warranties_product_idx").on(table.productId),
+    index("warranties_ends_at_idx").on(table.endsAt),
+  ],
 );
 
-export const productImages = pgTable("product_images", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  productId: uuid("product_id")
-    .notNull()
-    .references(() => products.id, { onDelete: "cascade" }),
-  sourceUrl: text("source_url"),
-  storageKey: text("storage_key"),
-  sha256: text("sha256"),
-  altText: text("alt_text"),
-  primary: boolean("primary").notNull().default(false),
-  confirmedByActorId: uuid("confirmed_by_actor_id").references(
-    () => actors.id,
-    { onDelete: "set null" },
-  ),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-});
+export const productImages = pgTable(
+  "product_images",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    productId: uuid("product_id")
+      .notNull()
+      .references(() => products.id, { onDelete: "cascade" }),
+    sourceUrl: text("source_url"),
+    storageKey: text("storage_key"),
+    thumbnailStorageKey: text("thumbnail_storage_key"),
+    sha256: text("sha256"),
+    altText: text("alt_text"),
+    primary: boolean("primary").notNull().default(false),
+    confirmedByActorId: uuid("confirmed_by_actor_id").references(
+      () => actors.id,
+      { onDelete: "set null" },
+    ),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("product_images_product_primary_created_idx").on(
+      table.productId,
+      table.primary,
+      table.createdAt,
+      table.id,
+    ),
+  ],
+);
 
 export const notes = pgTable(
   "notes",
@@ -410,7 +505,14 @@ export const notes = pgTable(
     body: text("body").notNull(),
     ...timestamps,
   },
-  (table) => [index("notes_product_idx").on(table.productId)],
+  (table) => [
+    index("notes_product_idx").on(table.productId),
+    index("notes_claim_created_idx").on(
+      table.claimId,
+      table.createdAt,
+      table.id,
+    ),
+  ],
 );
 
 export const claims = pgTable(
@@ -446,6 +548,16 @@ export const claims = pgTable(
       table.reference,
     ),
     index("claims_product_idx").on(table.productId),
+    index("claims_household_status_updated_idx").on(
+      table.householdId,
+      table.status,
+      table.updatedAt,
+    ),
+    index("claims_household_updated_idx").on(
+      table.householdId,
+      table.updatedAt,
+      table.id,
+    ),
   ],
 );
 
@@ -532,6 +644,41 @@ export const documents = pgTable(
   (table) => [
     index("documents_product_idx").on(table.productId),
     index("documents_claim_idx").on(table.claimId),
+    index("documents_purge_after_idx")
+      .on(table.purgeAfter, table.id)
+      .where(
+        sql`${table.backend} = 'local' and ${table.purgeAfter} is not null`,
+      ),
+    index("documents_household_active_created_idx")
+      .on(table.householdId, table.createdAt, table.id)
+      .where(sql`${table.trashedAt} is null`),
+  ],
+);
+
+export const documentPurgeJobs = pgTable(
+  "document_purge_jobs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    householdId: uuid("household_id")
+      .notNull()
+      .references(() => households.id, { onDelete: "cascade" }),
+    documentId: uuid("document_id").notNull(),
+    storageKey: text("storage_key").notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("document_purge_jobs_storage_key_unique").on(table.storageKey),
+    index("document_purge_jobs_retry_idx").on(table.nextAttemptAt),
   ],
 );
 

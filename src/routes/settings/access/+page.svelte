@@ -1,11 +1,14 @@
 <script lang="ts">
-  import { Bot, Copy, KeyRound, Plus, UserRound } from "lucide-svelte";
+  import { Plus } from "lucide-svelte";
   import PageHeader from "$lib/components/PageHeader.svelte";
-  let { data, form } = $props();
+  import AccountList from "./_components/AccountList.svelte";
+  import CredentialIsolationNote from "./_components/CredentialIsolationNote.svelte";
+  import FormNotices from "./_components/FormNotices.svelte";
+  import InvitationForm from "./_components/InvitationForm.svelte";
+  import type { PageProps } from "./$types";
+
+  let { data, form }: PageProps = $props();
   let showInvite = $state(false);
-  let copied = $state(false);
-  let resetCopied = $state(false);
-  let setupCopied = $state("");
   const permissionOptions = (
     [
       ["products:read", "View products"],
@@ -26,9 +29,6 @@
       ["notes:write", "Add notes"],
     ] as const
   ).filter(([permission]) => data.grantablePermissions.includes(permission));
-  function hasClaimAccess(ids: readonly string[] | undefined, id: string) {
-    return ids?.includes(id) ?? false;
-  }
 </script>
 
 <svelte:head><title>People & agents · Domino</title></svelte:head>
@@ -44,6 +44,7 @@
     {#if data.canManage && data.roles.length > 0}
       <button
         onclick={() => (showInvite = !showInvite)}
+        aria-expanded={showInvite}
         class="inline-flex min-h-11 items-center gap-2 bg-ink px-4 text-sm font-bold text-white"
         ><Plus size={17} /> Invite person</button
       >
@@ -54,317 +55,24 @@
     {/if}
   </PageHeader>
 
-  {#if form?.error}
-    <div
-      class="mt-6 border border-red bg-red-soft p-4 text-sm text-red"
-      role="alert"
-    >
-      {form.error}
-    </div>
-  {/if}
-  {#if form?.invitationUrl}
-    <div
-      class="mt-6 border border-green/30 bg-green-soft p-4 text-green"
-      role="status"
-    >
-      <strong>Invitation created.</strong>
-      <p class="mt-1 text-sm">Share this once; Domino only stores its hash.</p>
-      <div class="mt-3 flex gap-2">
-        <input
-          readonly
-          value={form.invitationUrl}
-          class="min-h-11 min-w-0 flex-1 border border-green/30 bg-sheet px-3 text-xs text-ink"
-        />
-        <button
-          type="button"
-          onclick={async () => {
-            await navigator.clipboard.writeText(form.invitationUrl);
-            copied = true;
-          }}
-          class="inline-flex min-h-11 items-center gap-2 bg-green px-4 text-xs font-bold text-white"
-          ><Copy size={15} /> {copied ? "Copied" : "Copy"}</button
-        >
-      </div>
-    </div>
-  {/if}
-  {#if form?.permissionsSaved}<div
-      class="mt-6 border border-green/30 bg-green-soft p-4 text-sm text-green"
-      role="status"
-    >
-      Service-account permissions saved.
-    </div>{/if}
-  {#if form?.claimAccessSaved}<div
-      class="mt-6 border border-green/30 bg-green-soft p-4 text-sm text-green"
-      role="status"
-    >
-      Claim access saved.
-    </div>{/if}
-  {#if form?.resetUrl}
-    <div
-      class="mt-6 border border-green/30 bg-green-soft p-4 text-sm text-green"
-      role="status"
-    >
-      <strong>Password-reset link created.</strong>
-      <div class="mt-3 flex gap-2">
-        <input
-          readonly
-          value={form.resetUrl}
-          class="min-h-11 min-w-0 flex-1 border border-green/30 bg-sheet px-3 text-xs text-ink"
-        /><button
-          type="button"
-          onclick={async () => {
-            await navigator.clipboard.writeText(form.resetUrl);
-            resetCopied = true;
-          }}
-          class="min-h-11 bg-green px-4 text-xs font-bold text-white"
-          >{resetCopied ? "Copied" : "Copy"}</button
-        >
-      </div>
-    </div>
-  {/if}
+  <FormNotices {form} />
 
   {#if showInvite && data.roles.length > 0}
-    <form
-      method="POST"
-      action="?/invite"
-      class="mt-6 grid gap-4 border border-ink bg-sheet p-5 sm:grid-cols-2"
-    >
-      <label
-        ><span class="text-xs font-bold text-muted uppercase">Email</span><input
-          name="email"
-          type="email"
-          required
-          class="mt-2 min-h-11 w-full border border-rule px-3"
-        /></label
-      >
-      <label
-        ><span class="text-xs font-bold text-muted uppercase">Display name</span
-        ><input
-          name="displayName"
-          class="mt-2 min-h-11 w-full border border-rule px-3"
-        /></label
-      >
-      <label
-        ><span class="text-xs font-bold text-muted uppercase">Role</span><select
-          name="roleId"
-          required
-          class="mt-2 min-h-11 w-full border border-rule bg-sheet px-3"
-          >{#each data.roles as role}<option value={role.id}>{role.name}</option
-            >{/each}</select
-        ></label
-      >
-      <div class="flex items-end">
-        <button class="min-h-11 w-full bg-ink px-4 text-sm font-bold text-white"
-          >Create invitation</button
-        >
-      </div>
-    </form>
+    <InvitationForm
+      roles={data.roles}
+      claims={data.claims}
+      canGrantAllClaims={data.canGrantAllClaims}
+      defaultClaimScope={data.defaultInvitationClaimScope}
+      defaultClaimIds={data.defaultInvitationClaimIds}
+    />
   {/if}
 
-  <section class="mt-8" aria-labelledby="accounts-heading">
-    <h2 id="accounts-heading" class="text-xl font-bold tracking-[-0.025em]">
-      Accounts
-    </h2>
-    <div class="mt-4 border-t border-ink">
-      {#each data.accounts as account}
-        <div
-          class="grid grid-cols-[auto_1fr] items-center gap-4 border-b border-rule py-4 sm:grid-cols-[auto_1fr_auto]"
-        >
-          <span
-            class={`grid size-11 place-items-center text-white ${account.kind === "service" ? "bg-orange" : "bg-ink"}`}
-          >
-            {#if account.kind === "service"}<Bot size={19} />{:else}<UserRound
-                size={19}
-              />{/if}
-          </span>
-          <div>
-            <div class="font-bold">{account.name}</div>
-            <div class="mt-1 text-xs text-muted">
-              {account.email ?? "Service account"} · {account.roleName ??
-                "No role"}
-            </div>
-          </div>
-          {#if account.canReset || account.canToggle}
-            <div class="col-span-2 flex flex-wrap gap-2 sm:col-span-1">
-              {#if account.canReset}<form method="POST" action="?/reset">
-                  <input
-                    type="hidden"
-                    name="actorId"
-                    value={account.id}
-                  /><button
-                    aria-label={`Reset ${account.name}'s password`}
-                    class="min-h-9 border border-rule px-3 text-xs font-bold"
-                    >Reset password</button
-                  >
-                </form>{/if}
-              {#if account.canToggle}
-                <form method="POST" action="?/toggle">
-                  <input type="hidden" name="actorId" value={account.id} />
-                  <input
-                    type="hidden"
-                    name="disabled"
-                    value={account.disabled ? "false" : "true"}
-                  />
-                  <button
-                    aria-label={`${account.disabled ? "Enable" : "Disable"} ${account.name}`}
-                    class={`min-h-9 border px-3 text-xs font-bold ${account.disabled ? "border-rule text-muted" : "border-green/30 text-green"}`}
-                    >{account.disabled ? "Enable" : "Disable"}</button
-                  >
-                </form>
-              {/if}
-            </div>
-          {:else}
-            <span class="text-xs font-bold text-green"
-              >{account.disabled ? "Disabled" : "Active"}</span
-            >
-          {/if}
-        </div>
-        {#if account.canEditPermissions}
-          <details class="border-b border-rule bg-paper px-4 py-3">
-            <summary class="cursor-pointer text-xs font-bold"
-              >Edit {account.name} permissions</summary
-            >
-            <form method="POST" action="?/permissions" class="mt-3">
-              <input type="hidden" name="actorId" value={account.id} />
-              <div class="grid sm:grid-cols-2 lg:grid-cols-3">
-                {#each permissionOptions as option}
-                  <label
-                    class="flex min-h-10 items-center gap-2 border-b border-rule text-xs"
-                  >
-                    <input
-                      name="permission"
-                      type="checkbox"
-                      value={option[0]}
-                      checked={account.permissions?.includes(option[0])}
-                      class="size-4 accent-orange"
-                    />
-                    {option[1]}
-                  </label>
-                {/each}
-              </div>
-              <button
-                class="mt-3 min-h-10 bg-ink px-4 text-xs font-bold text-white"
-                >Save permissions</button
-              >
-            </form>
-          </details>
-        {/if}
-        {#if account.kind === "service"}
-          <div class="border-b border-rule bg-paper px-4 py-3">
-            <div class="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <div class="text-xs font-bold">Credential-isolated setup</div>
-                <p class="mt-1 text-xs text-muted">
-                  Authenticate once, then let the agent use only the broker
-                  socket.
-                </p>
-              </div>
-              <button
-                type="button"
-                class="inline-flex min-h-10 items-center gap-2 border border-rule bg-sheet px-3 text-xs font-bold hover:border-ink"
-                onclick={async () => {
-                  await navigator.clipboard.writeText(
-                    `domino auth login --name "${account.name}" --no-open\ndomino broker serve --listen /run/domino/${account.id}.sock\ndomino --socket /run/domino/${account.id}.sock record create --file product.json --json`,
-                  );
-                  setupCopied = account.id;
-                }}
-              >
-                <Copy size={15} />
-                {setupCopied === account.id ? "Copied setup" : "Copy setup"}
-              </button>
-            </div>
-          </div>
-        {/if}
-        {#if account.canEditClaimAccess && (account.permissions?.includes("*") || account.permissions?.some( (permission) => ["claims:read", "claims:create", "claims:manage"].includes(permission) ))}
-          <details class="border-b border-rule bg-paper px-4 py-3">
-            <summary class="cursor-pointer text-xs font-bold">
-              Claims visible to {account.name}
-            </summary>
-            <form method="POST" action="?/claims" class="mt-4">
-              <input type="hidden" name="actorId" value={account.id} />
-              <fieldset>
-                <legend class="sr-only">Claim access scope</legend>
-                <div class="grid gap-2 sm:grid-cols-2">
-                  <label
-                    class="flex min-h-11 items-center gap-3 border border-rule bg-sheet px-3 text-xs font-bold"
-                  >
-                    <input
-                      type="radio"
-                      name="claimAccessScope"
-                      value="all"
-                      checked={account.claimAccessScope === "all"}
-                      class="size-4 accent-orange"
-                    />
-                    All household claims
-                  </label>
-                  <label
-                    class="flex min-h-11 items-center gap-3 border border-rule bg-sheet px-3 text-xs font-bold"
-                  >
-                    <input
-                      type="radio"
-                      name="claimAccessScope"
-                      value="selected"
-                      checked={account.claimAccessScope === "selected"}
-                      class="size-4 accent-orange"
-                    />
-                    Only selected claims
-                  </label>
-                </div>
-              </fieldset>
-              <div
-                class="mt-3 max-h-64 overflow-y-auto border-t border-ink"
-                aria-label="Available claims"
-              >
-                {#each data.claims as claim}
-                  <label
-                    class="grid min-h-12 grid-cols-[auto_1fr] items-center gap-3 border-b border-rule py-2 text-xs"
-                  >
-                    <input
-                      name="claimId"
-                      type="checkbox"
-                      value={claim.id}
-                      checked={hasClaimAccess(
-                        account.selectedClaimIds,
-                        claim.id,
-                      )}
-                      class="size-4 accent-orange"
-                    />
-                    <span class="min-w-0">
-                      <span class="block font-bold">{claim.reference}</span>
-                      <span class="mt-0.5 block truncate text-muted"
-                        >{claim.issue}</span
-                      >
-                    </span>
-                  </label>
-                {:else}
-                  <p class="border-b border-rule py-4 text-xs text-muted">
-                    No claims have been created yet.
-                  </p>
-                {/each}
-              </div>
-              <p class="mt-2 max-w-2xl text-xs leading-relaxed text-muted">
-                Restricted accounts automatically retain access to claims they
-                create. Product and document views follow this same claim scope.
-              </p>
-              <button
-                class="mt-3 min-h-10 bg-ink px-4 text-xs font-bold text-white"
-              >
-                Save claim access
-              </button>
-            </form>
-          </details>
-        {/if}
-      {/each}
-    </div>
-  </section>
-
-  <div class="mt-8 bg-blue-soft p-4">
-    <div class="flex gap-2 text-sm font-bold text-[#294968]">
-      <KeyRound size={17} /> Credential isolation
-    </div>
-    <p class="mt-2 text-xs leading-relaxed text-[#294968]/80">
-      Agents connect through revocable service accounts. The optional broker can
-      hold the credential under a separate OS identity.
-    </p>
-  </div>
+  <AccountList
+    accounts={data.accounts}
+    {permissionOptions}
+    permissionPresets={data.permissionPresets}
+    claims={data.claims}
+    canGrantAllClaims={data.canGrantAllClaims}
+  />
+  <CredentialIsolationNote />
 </div>

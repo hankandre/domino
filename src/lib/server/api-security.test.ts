@@ -1,8 +1,15 @@
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test } from "bun:test";
+import { demoProducts } from "$lib/demo";
 import { app } from "./api";
+import { clearRateLimitsForTests } from "./rate-limit";
 
 const originalDemoMode = process.env.DOMINO_DEMO_MODE;
 const originalOrigin = process.env.ORIGIN;
+
+function restoreEnvironment(name: string, value: string | undefined) {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+}
 
 async function issueDemoCredential(permissions: string[]) {
   const started = await app.request("/api/device/start", {
@@ -30,8 +37,9 @@ async function issueDemoCredential(permissions: string[]) {
 }
 
 afterEach(() => {
-  process.env.DOMINO_DEMO_MODE = originalDemoMode;
-  process.env.ORIGIN = originalOrigin;
+  restoreEnvironment("DOMINO_DEMO_MODE", originalDemoMode);
+  restoreEnvironment("ORIGIN", originalOrigin);
+  clearRateLimitsForTests();
 });
 
 describe("API browser boundaries", () => {
@@ -62,6 +70,48 @@ describe("API browser boundaries", () => {
     });
 
     expect(response.status).toBe(400);
+  });
+
+  test("persists selected claim scope during device approval", async () => {
+    process.env.DOMINO_DEMO_MODE = "true";
+    const claimId = crypto.randomUUID();
+    const started = await app.request("/api/device/start", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Scoped helper" }),
+    });
+    const device = (await started.json()) as {
+      deviceCode: string;
+      userCode: string;
+    };
+    const approved = await app.request("/api/device/approve", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        userCode: device.userCode,
+        permissions: ["claims:read"],
+        claimAccessScope: "selected",
+        claimIds: [claimId],
+      }),
+    });
+    expect(approved.status).toBe(200);
+
+    const issued = await app.request("/api/device/token", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ deviceCode: device.deviceCode }),
+    });
+    const credential = (await issued.json()) as { accessToken: string };
+    const me = await app.request("/api/v1/me", {
+      headers: { authorization: `Bearer ${credential.accessToken}` },
+    });
+    const body = (await me.json()) as {
+      actor: { claimAccessScope: string; claimIds?: string[] };
+    };
+
+    expect(me.status).toBe(200);
+    expect(body.actor.claimAccessScope).toBe("selected");
+    expect(body.actor.claimIds).toEqual([claimId]);
   });
 
   test("redacts claim, document, and note data from warranty-only product responses", async () => {
@@ -119,6 +169,76 @@ describe("API browser boundaries", () => {
     expect(invalidQuery.status).toBe(400);
   });
 
+  test("requires document read authority to refresh Paperless metadata", async () => {
+    process.env.DOMINO_DEMO_MODE = "true";
+    const token = await issueDemoCredential(["paperless:discover"]);
+    const response = await app.request(
+      `/api/v1/documents/${crypto.randomUUID()}/refresh`,
+      {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+      },
+    );
+
+    expect(response.status).toBe(403);
+  });
+
+  test("validates security-relevant headers with zValidator", async () => {
+    process.env.DOMINO_DEMO_MODE = "true";
+
+    const invalidAuthorization = await app.request("/api/v1/me", {
+      headers: { authorization: `Bearer ${"x".repeat(4_100)}` },
+    });
+    const invalidOrigin = await app.request("/api/v1/me", {
+      headers: { origin: "javascript:alert(1)" },
+    });
+
+    expect(invalidAuthorization.status).toBe(400);
+    expect(invalidOrigin.status).toBe(400);
+  });
+
+  test("bounds list windows at the API boundary", async () => {
+    process.env.DOMINO_DEMO_MODE = "true";
+
+    const responses = await Promise.all([
+      app.request("/api/v1/products?limit=201"),
+      app.request("/api/v1/claims?offset=-1"),
+      app.request("/api/v1/documents?limit=0"),
+      app.request("/api/v1/audit?offset=1000001"),
+    ]);
+
+    expect(responses.map((response) => response.status)).toEqual([
+      400, 400, 400, 400,
+    ]);
+  });
+
+  test("terminates pagination after the bounded search candidate window", async () => {
+    process.env.DOMINO_DEMO_MODE = "true";
+    const originalLength = demoProducts.length;
+    try {
+      const template = demoProducts[0];
+      while (demoProducts.length <= 1_000) {
+        demoProducts.push({
+          ...template,
+          id: crypto.randomUUID(),
+          name: `Fixture ${demoProducts.length}`,
+        });
+      }
+      const response = await app.request(
+        "/api/v1/products?limit=100&offset=1000",
+      );
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        products: unknown[];
+        page: { hasMore: boolean };
+      };
+      expect(body.products).toHaveLength(0);
+      expect(body.page.hasMore).toBe(false);
+    } finally {
+      demoProducts.splice(originalLength);
+    }
+  });
+
   test("validates multipart uploads with zValidator", async () => {
     process.env.DOMINO_DEMO_MODE = "true";
     const body = new FormData();
@@ -159,6 +279,77 @@ describe("API browser boundaries", () => {
     });
 
     expect(response.status).toBe(413);
+  });
+
+  test("rate limits public device enrollment by the server-derived address", async () => {
+    process.env.DOMINO_DEMO_MODE = "true";
+    const address = `device-${crypto.randomUUID()}`;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const response = await app.request("/api/device/start", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-domino-client-address": address,
+        },
+        body: JSON.stringify({ name: `Agent ${attempt}` }),
+      });
+      expect(response.status).toBe(200);
+    }
+    const limited = await app.request("/api/device/start", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-domino-client-address": address,
+      },
+      body: JSON.stringify({ name: "One too many" }),
+    });
+
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get("retry-after")).toBeTruthy();
+  });
+
+  test("rejects oversized uploads with missing or deceptive length headers", async () => {
+    process.env.DOMINO_DEMO_MODE = "true";
+    const productId = crypto.randomUUID();
+    const oversized = new File(
+      [new Uint8Array(11 * 1024 * 1024)],
+      "oversized.png",
+      { type: "image/png" },
+    );
+
+    const missingLengthBody = new FormData();
+    missingLengthBody.set("file", oversized);
+    const missingLength = await app.request(
+      `/api/v1/products/${productId}/images`,
+      { method: "POST", body: missingLengthBody },
+    );
+    expect(missingLength.status).toBe(413);
+
+    const deceptiveBody = new FormData();
+    deceptiveBody.set("file", oversized);
+    const deceptiveRequest = new Request(
+      `http://localhost/api/v1/products/${productId}/images`,
+      {
+        method: "POST",
+        headers: { "content-length": "1" },
+        body: deceptiveBody,
+      },
+    );
+    const deceptiveLength = await app.request(deceptiveRequest);
+    expect(deceptiveLength.status).toBe(400);
+
+    const declaredOversize = await app.request(
+      `/api/v1/products/${productId}/images/upload`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "image/png",
+          "content-length": String(10 * 1024 * 1024 + 1),
+        },
+        body: new Uint8Array([1]),
+      },
+    );
+    expect(declaredOversize.status).toBe(413);
   });
 
   test("validates the permissions needed by each product-record component", async () => {

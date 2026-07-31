@@ -1,6 +1,7 @@
 <script lang="ts">
   import { ArrowRight, KeyRound } from "lucide-svelte";
   import { page } from "$app/state";
+  import { pendingForm } from "$lib/form-pending";
 
   let { data, form } = $props();
   const returnTo = $derived(page.url.searchParams.get("returnTo") ?? "/");
@@ -62,7 +63,7 @@
 
   <section class="flex items-center justify-center px-5 py-12 sm:px-10">
     <div class="w-full max-w-md border-y border-ink bg-sheet py-8 sm:px-8">
-      <span class="grid size-11 place-items-center bg-blue-soft text-[#294968]">
+      <span class="grid size-11 place-items-center bg-blue-soft text-blue-ink">
         <KeyRound size={21} />
       </span>
       <h2 class="mt-6 text-3xl font-bold tracking-[-0.035em]">
@@ -92,7 +93,7 @@
         </div>
       {/if}
 
-      <form method="POST" class="mt-6 space-y-4">
+      <form method="POST" class="mt-6 space-y-4" use:pendingForm>
         <input type="hidden" name="returnTo" value={returnTo} />
         <label class="block">
           <span
@@ -122,6 +123,7 @@
           />
         </label>
         <button
+          data-pending-label="Signing in…"
           class="min-h-12 w-full bg-ink px-5 text-sm font-bold text-white transition-colors hover:bg-orange"
         >
           Sign in

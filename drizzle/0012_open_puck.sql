@@ -1,0 +1,2 @@
+ALTER TABLE "warranties" ADD COLUMN "submission_methods" jsonb DEFAULT '[]'::jsonb NOT NULL;--> statement-breakpoint
+ALTER TABLE "warranties" ADD COLUMN "required_evidence" jsonb DEFAULT '[]'::jsonb NOT NULL;

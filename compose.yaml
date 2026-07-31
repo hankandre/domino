@@ -2,6 +2,7 @@ name: domino
 
 x-domino-environment: &domino-environment
   DATABASE_URL: postgres://domino:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/domino
+  DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:-10}
   DOMINO_DEMO_MODE: ${DOMINO_DEMO_MODE:-false}
   ORIGIN: ${DOMINO_ORIGIN:-http://localhost:3000}
   PAPERLESS_URL: ${PAPERLESS_URL:-}
@@ -12,17 +13,22 @@ x-domino-environment: &domino-environment
   DOMINO_OIDC_CLIENT_ID: ${DOMINO_OIDC_CLIENT_ID:-}
   DOMINO_OIDC_CLIENT_SECRET_FILE: /run/secrets/oidc_client_secret
   DOMINO_SESSION_SECRET_FILE: /run/secrets/session_secret
+  DOMINO_CREDENTIAL_ENCRYPTION_KEY_FILE: /run/secrets/credential_encryption_key
   DOMINO_OIDC_SCOPES: ${DOMINO_OIDC_SCOPES:-openid profile email groups}
   DOMINO_OIDC_ALLOWED_GROUPS: ${DOMINO_OIDC_ALLOWED_GROUPS:-}
   DOMINO_OIDC_REQUIRE_VERIFIED_EMAIL: ${DOMINO_OIDC_REQUIRE_VERIFIED_EMAIL:-true}
   DOMINO_OIDC_AUTO_PROVISION: ${DOMINO_OIDC_AUTO_PROVISION:-true}
   DOMINO_OIDC_LINK_EXISTING_BY_EMAIL: ${DOMINO_OIDC_LINK_EXISTING_BY_EMAIL:-false}
   DOMINO_OIDC_DEFAULT_ROLE: ${DOMINO_OIDC_DEFAULT_ROLE:-Member}
+  DOMINO_OIDC_DEFAULT_CLAIM_PRESET: ${DOMINO_OIDC_DEFAULT_CLAIM_PRESET:-all}
   DOMINO_OIDC_BOOTSTRAP_OWNER_EMAIL: ${DOMINO_OIDC_BOOTSTRAP_OWNER_EMAIL:-}
+  DOMINO_OIDC_HOUSEHOLD_ID: ${DOMINO_OIDC_HOUSEHOLD_ID:-}
   DOMINO_HOUSEHOLD_NAME: ${DOMINO_HOUSEHOLD_NAME:-Home}
   DOMINO_HOUSEHOLD_SLUG: ${DOMINO_HOUSEHOLD_SLUG:-home}
   DOMINO_SESSION_TTL_HOURS: ${DOMINO_SESSION_TTL_HOURS:-168}
   DOMINO_DEVICE_FLOW_MAX_OUTSTANDING: ${DOMINO_DEVICE_FLOW_MAX_OUTSTANDING:-1000}
+  ADDRESS_HEADER: ${ADDRESS_HEADER:-}
+  XFF_DEPTH: ${XFF_DEPTH:-}
   BODY_SIZE_LIMIT: 55M
 
 x-domino-security: &domino-security
@@ -89,6 +95,7 @@ services:
       - paperless_token
       - oidc_client_secret
       - session_secret
+      - credential_encryption_key
     depends_on:
       postgres:
         condition: service_healthy
@@ -194,3 +201,5 @@ secrets:
     file: ${DOMINO_OIDC_CLIENT_SECRET_PATH:-./secrets/oidc_client_secret}
   session_secret:
     file: ${DOMINO_SESSION_SECRET_PATH:-./secrets/session_secret}
+  credential_encryption_key:
+    file: ${DOMINO_CREDENTIAL_ENCRYPTION_KEY_PATH:-./secrets/credential_encryption_key}

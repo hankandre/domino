@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import * as schema from "../db/schema";
 import type { ProductCreateInput } from "./products";
@@ -54,6 +54,14 @@ function normalizedText(value: string | null | undefined) {
   return (value ?? "").trim().toLocaleLowerCase().replaceAll(/\s+/g, " ");
 }
 
+function normalizedIdentifierColumn(column: unknown) {
+  return sql<string>`upper(regexp_replace(coalesce(${column}, ''), '[^A-Za-z0-9]', '', 'g'))`;
+}
+
+function normalizedTextColumn(column: unknown) {
+  return sql<string>`lower(regexp_replace(trim(coalesce(${column}, '')), '[[:space:]]+', ' ', 'g'))`;
+}
+
 export function productRecordRequestHash(input: ProductRecordInput) {
   return createHash("sha256").update(JSON.stringify(input)).digest("hex");
 }
@@ -63,27 +71,13 @@ async function duplicateMatches(
   householdId: string,
   input: ProductRecordInput,
 ) {
-  const products = await db
-    .select()
-    .from(schema.products)
-    .where(eq(schema.products.householdId, householdId));
-  if (products.length === 0) return { exact: [], warnings: [] };
-  const productIds = products.map((product) => product.id);
-  const [serials, sources] = await Promise.all([
-    db
-      .select()
-      .from(schema.productSerials)
-      .where(inArray(schema.productSerials.productId, productIds)),
-    db
-      .select()
-      .from(schema.productSources)
-      .where(eq(schema.productSources.householdId, householdId)),
-  ]);
-  const submittedSerials = new Set(
-    (input.product.serialNumbers ?? [])
-      .map(normalizedIdentifier)
-      .filter(Boolean),
-  );
+  const submittedSerials = [
+    ...new Set(
+      (input.product.serialNumbers ?? [])
+        .map(normalizedIdentifier)
+        .filter(Boolean),
+    ),
+  ];
   const submittedExternal = input.sources
     .filter(
       (source): source is Extract<ProductSourceInput, { kind: "external" }> =>
@@ -93,70 +87,124 @@ async function duplicateMatches(
       (source) =>
         `${normalizedText(source.externalSystem)}:${normalizedIdentifier(source.externalId)}`,
     );
-  const exact: DuplicateMatch[] = [];
-  const warnings: DuplicateMatch[] = [];
-
-  for (const product of products) {
-    const reasons: string[] = [];
-    const productSerials = serials
-      .filter((serial) => serial.productId === product.id)
-      .map((serial) => normalizedIdentifier(serial.value));
-    if (
-      submittedSerials.size > 0 &&
-      productSerials.some((serial) => submittedSerials.has(serial))
-    ) {
-      reasons.push("serial_number");
-    }
-    const productExternal = new Set(
-      sources
-        .filter(
-          (source) =>
-            source.productId === product.id &&
-            source.externalSystem &&
-            source.externalId,
+  const retailer = normalizedText(input.product.retailer);
+  const orderNumber = normalizedText(input.product.orderNumber);
+  const brand = normalizedText(input.product.brand);
+  const model = normalizedText(input.product.model);
+  const name = normalizedText(input.product.name);
+  const [serialMatches, externalMatches, orderMatches, similarMatches] =
+    await Promise.all([
+      submittedSerials.length
+        ? db
+            .select({
+              productId: schema.products.id,
+              name: schema.products.name,
+            })
+            .from(schema.productSerials)
+            .innerJoin(
+              schema.products,
+              eq(schema.productSerials.productId, schema.products.id),
+            )
+            .where(
+              and(
+                eq(schema.products.householdId, householdId),
+                inArray(
+                  normalizedIdentifierColumn(schema.productSerials.value),
+                  submittedSerials,
+                ),
+              ),
+            )
+            .limit(50)
+        : Promise.resolve([]),
+      submittedExternal.length
+        ? db
+            .select({
+              productId: schema.products.id,
+              name: schema.products.name,
+            })
+            .from(schema.productSources)
+            .innerJoin(
+              schema.products,
+              eq(schema.productSources.productId, schema.products.id),
+            )
+            .where(
+              and(
+                eq(schema.productSources.householdId, householdId),
+                inArray(
+                  sql<string>`${normalizedTextColumn(schema.productSources.externalSystem)} || ':' || ${normalizedIdentifierColumn(schema.productSources.externalId)}`,
+                  submittedExternal,
+                ),
+              ),
+            )
+            .limit(50)
+        : Promise.resolve([]),
+      retailer && orderNumber && brand && model
+        ? db
+            .select({
+              productId: schema.products.id,
+              name: schema.products.name,
+            })
+            .from(schema.products)
+            .where(
+              and(
+                eq(schema.products.householdId, householdId),
+                eq(normalizedTextColumn(schema.products.retailer), retailer),
+                eq(
+                  normalizedTextColumn(schema.products.orderNumber),
+                  orderNumber,
+                ),
+                eq(normalizedTextColumn(schema.products.brand), brand),
+                eq(normalizedTextColumn(schema.products.model), model),
+              ),
+            )
+            .limit(50)
+        : Promise.resolve([]),
+      db
+        .select({
+          productId: schema.products.id,
+          name: schema.products.name,
+          sameName: sql<boolean>`${normalizedTextColumn(schema.products.name)} = ${name}`,
+          sameBrandModel: sql<boolean>`${normalizedTextColumn(schema.products.brand)} = ${brand} and ${normalizedTextColumn(schema.products.model)} = ${model}`,
+        })
+        .from(schema.products)
+        .where(
+          and(
+            eq(schema.products.householdId, householdId),
+            or(
+              eq(normalizedTextColumn(schema.products.name), name),
+              brand && model
+                ? and(
+                    eq(normalizedTextColumn(schema.products.brand), brand),
+                    eq(normalizedTextColumn(schema.products.model), model),
+                  )
+                : undefined,
+            ),
+          ),
         )
-        .map(
-          (source) =>
-            `${normalizedText(source.externalSystem)}:${normalizedIdentifier(source.externalId)}`,
-        ),
-    );
-    if (submittedExternal.some((source) => productExternal.has(source))) {
-      reasons.push("external_source");
-    }
-    if (
-      normalizedText(input.product.retailer) &&
-      normalizedText(input.product.orderNumber) &&
-      normalizedText(input.product.brand) &&
-      normalizedText(input.product.model) &&
-      normalizedText(input.product.retailer) ===
-        normalizedText(product.retailer) &&
-      normalizedText(input.product.orderNumber) ===
-        normalizedText(product.orderNumber) &&
-      normalizedText(input.product.brand) === normalizedText(product.brand) &&
-      normalizedText(input.product.model) === normalizedText(product.model)
-    ) {
-      reasons.push("retailer_order_product");
-    }
-    if (reasons.length) {
-      exact.push({ productId: product.id, name: product.name, reasons });
-      continue;
-    }
-    const sameBrandModel =
-      normalizedText(input.product.brand) &&
-      normalizedText(input.product.model) &&
-      normalizedText(input.product.brand) === normalizedText(product.brand) &&
-      normalizedText(input.product.model) === normalizedText(product.model);
-    const sameName =
-      normalizedText(input.product.name) === normalizedText(product.name);
-    if (sameBrandModel || sameName) {
-      warnings.push({
-        productId: product.id,
-        name: product.name,
-        reasons: [sameBrandModel ? "similar_brand_model" : "similar_name"],
-      });
-    }
-  }
-  return { exact, warnings };
+        .limit(50),
+    ]);
+
+  const exactByProduct = new Map<string, DuplicateMatch>();
+  const addExact = (
+    match: { productId: string; name: string },
+    reason: string,
+  ) => {
+    const existing = exactByProduct.get(match.productId);
+    if (existing) existing.reasons.push(reason);
+    else exactByProduct.set(match.productId, { ...match, reasons: [reason] });
+  };
+  for (const match of serialMatches) addExact(match, "serial_number");
+  for (const match of externalMatches) addExact(match, "external_source");
+  for (const match of orderMatches) addExact(match, "retailer_order_product");
+
+  const warnings = similarMatches
+    .filter((match) => !exactByProduct.has(match.productId))
+    .map((match) => ({
+      productId: match.productId,
+      name: match.name,
+      reasons: [match.sameBrandModel ? "similar_brand_model" : "similar_name"],
+    }));
+  return { exact: [...exactByProduct.values()], warnings };
 }
 
 export async function validateProductRecord(
@@ -258,6 +306,8 @@ export async function createProductRecord(
               claimEmail: warranty.claimEmail,
               eligibilityNotes: warranty.eligibilityNotes,
               claimDeadline: warranty.claimDeadline,
+              submissionMethods: warranty.submissionMethods ?? [],
+              requiredEvidence: warranty.requiredEvidence ?? [],
               claimInstructions: warranty.claimInstructions ?? [],
             })),
           )

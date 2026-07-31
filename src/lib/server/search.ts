@@ -11,6 +11,24 @@ export interface SearchFilters {
   expiresBefore?: string;
 }
 
+export type ProductSort = "newest" | "name" | "warranty";
+
+export function sortProductSummaries(
+  products: ProductSummary[],
+  sort: ProductSort,
+) {
+  return products.toSorted((a, b) => {
+    if (sort === "name")
+      return `${a.brand} ${a.name}`.localeCompare(`${b.brand} ${b.name}`);
+    if (sort === "warranty") {
+      return (a.warrantyEndsAt ?? "9999-12-31").localeCompare(
+        b.warrantyEndsAt ?? "9999-12-31",
+      );
+    }
+    return b.purchasedAt.localeCompare(a.purchasedAt);
+  });
+}
+
 function within(value: string | null, after?: string, before?: string) {
   if (!value) return false;
   if (after && value < after) return false;

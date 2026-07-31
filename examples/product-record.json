@@ -19,9 +19,21 @@
       "startsAt": "2026-07-12",
       "endsAt": "2027-07-12",
       "claimUrl": "https://www.kitchenaid.com/service-and-support.html",
+      "submissionMethods": ["web", "phone"],
+      "requiredEvidence": [
+        {
+          "label": "Proof of purchase",
+          "required": true
+        },
+        {
+          "label": "Photo of the serial label",
+          "required": true
+        }
+      ],
       "claimInstructions": [
         {
-          "title": "Have the receipt and serial number ready",
+          "title": "Open the support form",
+          "detail": "Keep the confirmation number returned after submission.",
           "required": true
         }
       ]

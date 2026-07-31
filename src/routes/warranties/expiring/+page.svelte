@@ -1,6 +1,7 @@
 <script lang="ts">
   import { ArrowLeft, CalendarClock } from "lucide-svelte";
   import PageHeader from "$lib/components/PageHeader.svelte";
+  import Pagination from "$lib/components/Pagination.svelte";
   import ProductCard from "$lib/components/ProductCard.svelte";
   let { data } = $props();
   const expiringProducts = $derived(data.products);
@@ -15,7 +16,7 @@
 >
   <a
     href="/"
-    class="mb-6 inline-flex min-h-10 items-center gap-2 text-sm font-bold text-muted hover:text-ink"
+    class="mb-6 inline-flex min-h-11 items-center gap-2 text-sm font-bold text-muted hover:text-ink"
   >
     <ArrowLeft size={17} /> Back to inventory
   </a>
@@ -37,9 +38,9 @@
       </span>
       <div>
         <p class="font-bold">
-          {expiringProducts.length} warranties need review
+          {expiringProducts.length} warranties need review on this page
         </p>
-        <p class="mt-1 text-sm text-[#294968]">
+        <p class="mt-1 text-sm text-blue-ink">
           Open a product to confirm its terms or update the coverage record.
         </p>
       </div>
@@ -65,4 +66,10 @@
       </div>
     </div>
   {/if}
+  <Pagination
+    page={data.expiringPage?.page ?? 1}
+    previousHref={data.expiringPage?.previousHref ?? null}
+    nextHref={data.expiringPage?.nextHref ?? null}
+    label="expiring warranties"
+  />
 </div>

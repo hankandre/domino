@@ -1,0 +1,58 @@
+import type { ApiRouteContract } from "./contract";
+
+export const imageRouteContracts = [
+  {
+    method: "post",
+    path: "/v1/image-suggestions",
+    operationId: "suggestProductImages",
+    summary: "Discover product image candidates",
+    tag: "Product images",
+    permissions: ["images:attach OR warranties:write"],
+    request: { schema: "ImageSuggestionInput" },
+    rateLimit: "30 requests per actor per hour",
+  },
+  {
+    method: "post",
+    path: "/v1/products/{id}/images/from-url",
+    operationId: "attachProductImageFromUrl",
+    summary: "Fetch and attach a product image",
+    tag: "Product images",
+    permissions: ["images:attach OR warranties:write"],
+    request: { schema: "ImageFromUrlInput" },
+    success: 201,
+    rateLimit: "30 requests per actor per hour",
+  },
+  {
+    method: "post",
+    path: "/v1/products/{id}/images",
+    operationId: "attachProductImageMultipart",
+    summary: "Upload a product image as multipart data",
+    tag: "Product images",
+    permissions: ["images:attach OR warranties:write"],
+    request: { contentType: "multipart/form-data", binary: true },
+    success: 201,
+    description: "Accepts a `file` part up to 10 MiB.",
+  },
+  {
+    method: "post",
+    path: "/v1/products/{id}/images/upload",
+    operationId: "attachProductImageStream",
+    summary: "Stream a product image",
+    tag: "Product images",
+    permissions: ["images:attach OR warranties:write"],
+    request: { contentType: "application/octet-stream", binary: true },
+    success: 201,
+    description:
+      "Streams up to 10 MiB. Send the actual image MIME type in Content-Type and Content-Length when known.",
+  },
+  {
+    method: "get",
+    path: "/v1/product-images/{id}/content",
+    operationId: "getProductImageContent",
+    summary: "Download product image content",
+    tag: "Product images",
+    permissions: ["products:read OR warranties:read"],
+    query: "ImageContentQuery",
+    responseContentType: "image/*",
+  },
+] satisfies ApiRouteContract[];

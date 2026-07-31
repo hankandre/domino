@@ -1,7 +1,11 @@
 import type { RequestHandler } from "./$types";
 import { app } from "$lib/server/api";
 
-const handler: RequestHandler = ({ request }) => app.fetch(request);
+const handler: RequestHandler = ({ request, getClientAddress }) => {
+  const headers = new Headers(request.headers);
+  headers.set("x-domino-client-address", getClientAddress());
+  return app.fetch(new Request(request, { headers }));
+};
 
 export {
   handler as DELETE,

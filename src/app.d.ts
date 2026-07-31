@@ -1,13 +1,12 @@
+import type { ActorAuthority } from "$lib/server/auth/authorization";
+
 declare global {
   namespace App {
     interface Locals {
-      actor?: {
+      actor?: ActorAuthority & {
         id: string;
         householdId: string;
         kind: "user" | "service";
-        permissions: string[];
-        claimAccessScope: "all" | "selected";
-        claimIds?: string[];
         user?: {
           id: string;
           email: string;

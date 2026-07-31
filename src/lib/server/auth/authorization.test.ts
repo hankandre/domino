@@ -1,5 +1,7 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test } from "bun:test";
 import {
+  canAdministerActorAuthority,
+  claimAuthority,
   canAdministerPermissions,
   canAdministerUserIdentity,
   hasPermission,
@@ -15,10 +17,38 @@ function actor(permissions: string[]): NonNullable<App.Locals["actor"]> {
     kind: "user",
     permissions,
     claimAccessScope: "all",
+    claimIds: undefined,
   };
 }
 
 describe("page authorization", () => {
+  test("normalizes claim authority sets and checks both authority dimensions", () => {
+    const administrator = {
+      permissions: ["claims:read", "claims:manage"],
+      ...claimAuthority("selected", ["claim-a", "claim-a", "claim-b"]),
+    };
+
+    expect(administrator.claimIds).toEqual(["claim-a", "claim-b"]);
+    expect(
+      canAdministerActorAuthority(administrator, {
+        permissions: ["claims:read"],
+        ...claimAuthority("selected", ["claim-b"]),
+      }),
+    ).toBe(true);
+    expect(
+      canAdministerActorAuthority(administrator, {
+        permissions: ["claims:read", "documents:read"],
+        ...claimAuthority("selected", ["claim-b"]),
+      }),
+    ).toBe(false);
+    expect(
+      canAdministerActorAuthority(administrator, {
+        permissions: ["claims:read"],
+        ...claimAuthority("all"),
+      }),
+    ).toBe(false);
+  });
+
   test("only administers roles within the administrator's authority", () => {
     expect(
       canAdministerPermissions(
@@ -38,16 +68,20 @@ describe("page authorization", () => {
   test("does not reset a user identity shared with another household", () => {
     expect(
       canAdministerUserIdentity(
-        ["household:manage", "claims:read"],
+        actor(["household:manage", "claims:read"]),
         "household-one",
         [
           {
             householdId: "household-one",
             permissions: ["claims:read"],
+            claimAccessScope: "all",
+            claimIds: undefined,
           },
           {
             householdId: "household-two",
             permissions: ["claims:read"],
+            claimAccessScope: "all",
+            claimIds: undefined,
           },
         ],
       ),
@@ -57,15 +91,68 @@ describe("page authorization", () => {
   test("does not reset an identity with permissions above the manager", () => {
     expect(
       canAdministerUserIdentity(
-        ["household:manage", "claims:read"],
+        actor(["household:manage", "claims:read"]),
         "household-one",
         [
           {
             householdId: "household-one",
             permissions: ["claims:manage"],
+            claimAccessScope: "all",
+            claimIds: undefined,
           },
         ],
       ),
+    ).toBe(false);
+  });
+
+  test("does not let a claim-restricted manager administer a broader identity", () => {
+    expect(
+      canAdministerUserIdentity(
+        {
+          ...actor(["household:manage", "claims:read"]),
+          claimAccessScope: "selected",
+          claimIds: ["claim-one"],
+        },
+        "household-one",
+        [
+          {
+            householdId: "household-one",
+            permissions: ["claims:read"],
+            claimAccessScope: "all",
+            claimIds: undefined,
+          },
+        ],
+      ),
+    ).toBe(false);
+  });
+
+  test("only administers claim selections within the manager's own scope", () => {
+    const administrator = {
+      ...actor(["household:manage", "claims:read"]),
+      claimAccessScope: "selected" as const,
+      claimIds: ["claim-one", "claim-two"],
+    };
+
+    expect(
+      canAdministerActorAuthority(administrator, {
+        permissions: ["claims:read"],
+        claimAccessScope: "selected",
+        claimIds: ["claim-two"],
+      }),
+    ).toBe(true);
+    expect(
+      canAdministerActorAuthority(administrator, {
+        permissions: ["claims:read"],
+        claimAccessScope: "selected",
+        claimIds: ["claim-three"],
+      }),
+    ).toBe(false);
+    expect(
+      canAdministerActorAuthority(administrator, {
+        permissions: ["claims:read"],
+        claimAccessScope: "all",
+        claimIds: undefined,
+      }),
     ).toBe(false);
   });
 

@@ -4,6 +4,8 @@ build/
 coverage/
 target/
 tmp/
+.vitest-attachments/
+**/__screenshots__/
 
 .env
 .env.*

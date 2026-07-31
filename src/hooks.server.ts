@@ -4,6 +4,8 @@ import {
   getOidcConfig,
   sessionCookieName,
 } from "$lib/server/auth/oidc";
+import { claimAuthority } from "$lib/server/auth/authorization";
+import { startDocumentMaintenance } from "$lib/server/maintenance";
 
 const publicRoutes = [
   "/login",
@@ -20,7 +22,7 @@ export const handle: Handle = async ({ event, resolve }) => {
       householdId: "demo-household",
       kind: "user",
       permissions: ["*"],
-      claimAccessScope: "all",
+      ...claimAuthority("all"),
       user: {
         id: "demo-user",
         email: "owner@demo.local",
@@ -34,12 +36,18 @@ export const handle: Handle = async ({ event, resolve }) => {
     return applySecurityHeaders(response);
   }
 
-  const sessionToken = event.cookies.get(sessionCookieName);
+  const pathname = event.url.pathname;
+  const isApi = pathname.startsWith("/api/");
+  startDocumentMaintenance();
+
+  // Hono owns API authentication. Avoid doing the same session lookup twice.
+  const sessionToken = !isApi
+    ? event.cookies.get(sessionCookieName)
+    : undefined;
   if (sessionToken)
     event.locals.actor =
       (await authenticateSessionToken(sessionToken)) ?? undefined;
 
-  const pathname = event.url.pathname;
   const isPublic =
     publicRoutes.includes(pathname) ||
     pathname.startsWith("/invite/") ||
@@ -47,8 +55,6 @@ export const handle: Handle = async ({ event, resolve }) => {
     pathname === "/api/device/start" ||
     pathname === "/api/device/token" ||
     pathname.startsWith("/_app/");
-  const isApi = pathname.startsWith("/api/");
-
   if (!event.locals.actor && !isPublic && !isApi) {
     getOidcConfig();
     const returnTo = `${pathname}${event.url.search}`;

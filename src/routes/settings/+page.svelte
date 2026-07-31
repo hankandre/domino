@@ -10,6 +10,7 @@
   } from "lucide-svelte";
   import { untrack } from "svelte";
   import PageHeader from "$lib/components/PageHeader.svelte";
+  import { pendingForm } from "$lib/form-pending";
   let { data, form } = $props();
   let backend = $state<"paperless" | "local">(
     untrack(
@@ -85,7 +86,7 @@
         </div>
       </div>
 
-      <form method="POST" action="?/save" class="mt-4">
+      <form method="POST" action="?/save" class="mt-4" use:pendingForm>
         <div class="mt-4 grid gap-3 sm:grid-cols-2">
           <label
             class="flex cursor-pointer gap-3 border p-4"
@@ -103,9 +104,10 @@
             <span
               ><span class="flex items-center gap-2 font-bold"
                 >Paperless-ngx
-                {#if data.paperless.configured}<span
-                    class="text-green"
-                    aria-label="Configured"><Check size={15} /></span
+                {#if data.paperless.configured}<span class="text-green"
+                    ><Check size={15} aria-hidden="true" /><span class="sr-only"
+                      >Configured</span
+                    ></span
                   >{/if}</span
               ><span class="mt-1 block text-xs leading-relaxed text-muted"
                 >Paperless stores files. Domino keeps document IDs, metadata,
@@ -155,6 +157,7 @@
               />
             </label>
             {#if data.canManageHousehold}<button
+                data-pending-label="Saving settings…"
                 class="inline-flex min-h-11 items-center gap-2 bg-ink px-5 text-sm font-bold text-white hover:bg-orange"
                 ><Save size={16} /> Save household settings</button
               >{/if}
@@ -173,7 +176,12 @@
             </p>
           </div>
           <span
-            class={`px-2 py-1 text-[0.68rem] font-bold tracking-[0.055em] uppercase ${data.paperless.configured ? "bg-green-soft text-green" : "bg-paper text-muted"}`}
+            class={[
+              "px-2 py-1 text-[0.68rem] font-bold tracking-[0.055em] uppercase",
+              data.paperless.configured
+                ? "bg-green-soft text-green"
+                : "bg-paper text-muted",
+            ]}
           >
             {data.paperless.configured ? "Connected" : "Not connected"}
           </span>
@@ -191,6 +199,7 @@
         <form
           method="POST"
           action="?/savePaperless"
+          use:pendingForm
           class="mt-4 border border-rule bg-sheet p-4 sm:p-5"
         >
           <div class="grid gap-4 sm:grid-cols-2">
@@ -246,6 +255,7 @@
           </div>
           {#if data.canManagePaperless}
             <button
+              data-pending-label="Saving connection…"
               class="mt-5 inline-flex min-h-11 items-center gap-2 bg-ink px-4 text-sm font-bold text-white hover:bg-orange"
             >
               <Save size={16} /> Save connection
@@ -260,17 +270,23 @@
 
         {#if data.canManagePaperless}
           <div class="mt-3 flex flex-wrap gap-3">
-            <form method="POST" action="?/testPaperless">
+            <form method="POST" action="?/testPaperless" use:pendingForm>
               <button
+                data-pending-label="Testing connection…"
                 disabled={!data.paperless.configured}
-                class="inline-flex min-h-10 items-center gap-2 border border-rule bg-sheet px-3 text-xs font-bold hover:border-ink disabled:cursor-not-allowed disabled:opacity-45"
+                class="inline-flex min-h-11 items-center gap-2 border border-rule bg-sheet px-3 text-xs font-bold hover:border-ink disabled:cursor-not-allowed disabled:opacity-45"
                 >Test saved connection <ExternalLink size={14} /></button
               >
             </form>
             {#if data.paperless.enabled}
-              <form method="POST" action="?/disconnectPaperless">
+              <form
+                method="POST"
+                action="?/disconnectPaperless"
+                use:pendingForm
+              >
                 <button
-                  class="inline-flex min-h-10 items-center gap-2 border border-red/40 bg-sheet px-3 text-xs font-bold text-red hover:border-red"
+                  data-pending-label="Disconnecting…"
+                  class="inline-flex min-h-11 items-center gap-2 border border-red/40 bg-sheet px-3 text-xs font-bold text-red hover:border-red"
                 >
                   Disconnect Paperless-ngx
                 </button>
@@ -283,8 +299,7 @@
 
     <section class="border-t border-rule pt-8">
       <div class="flex items-start gap-3">
-        <span
-          class="grid size-10 place-items-center bg-blue-soft text-[#294968]"
+        <span class="grid size-10 place-items-center bg-blue-soft text-blue-ink"
           ><Image size={19} /></span
         >
         <div>
@@ -329,7 +344,12 @@
           </div>
         </div>
         <span
-          class={`px-2 py-1 text-[0.68rem] font-bold tracking-[0.055em] uppercase ${data.oidc.enabled ? "bg-green-soft text-green" : "bg-paper text-muted"}`}
+          class={[
+            "px-2 py-1 text-[0.68rem] font-bold tracking-[0.055em] uppercase",
+            data.oidc.enabled
+              ? "bg-green-soft text-green"
+              : "bg-paper text-muted",
+          ]}
         >
           {data.oidc.enabled ? "Configured" : "Disabled"}
         </span>

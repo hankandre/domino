@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pendingForm } from "$lib/form-pending";
   import { ShieldCheck } from "lucide-svelte";
   let { data, form } = $props();
 </script>
@@ -29,7 +30,7 @@
         {form.error}
       </div>
     {/if}
-    <form method="POST" class="mt-6 space-y-4">
+    <form method="POST" class="mt-6 space-y-4" use:pendingForm>
       <label class="block">
         <span class="text-xs font-bold tracking-[0.055em] text-muted uppercase"
           >Your name</span
@@ -70,6 +71,7 @@
         />
       </label>
       <button
+        data-pending-label="Joining household…"
         class="min-h-12 w-full bg-ink px-5 text-sm font-bold text-white hover:bg-orange"
         >Create account</button
       >

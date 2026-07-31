@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: domino
+  namespace: domino
+  annotations:
+    # Replace with annotations for the cluster's ingress controller and issuer.
+    cert-manager.io/cluster-issuer: letsencrypt-production
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - domino.example.test
+      secretName: domino-tls
+  rules:
+    - host: domino.example.test
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: domino
+                port:
+                  name: http

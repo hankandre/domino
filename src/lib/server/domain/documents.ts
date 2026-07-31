@@ -1,20 +1,42 @@
 import { createHash, randomBytes } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { mkdir, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { createReadStream, openAsBlob } from "node:fs";
+import { mkdir, rename, stat, unlink } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { Readable } from "node:stream";
-import { and, eq, inArray, isNull, lt, or } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lt, lte, or } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import * as schema from "../db/schema";
 import { paperlessClientForHousehold } from "../integrations/paperless";
+import type { PaperlessClient } from "../paperless";
+import {
+  MAX_LIST_LIMIT,
+  normalizeListWindow,
+  type ListWindow,
+} from "../pagination";
+import { stageUpload, type UploadSource } from "./upload-staging";
 
 type Database = NodePgDatabase<typeof schema>;
 type DocumentKind = (typeof schema.documentKind.enumValues)[number];
 
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
 
+export class DocumentUploadSizeError extends Error {
+  constructor() {
+    super("Attachments must be between 1 byte and 50 MiB.");
+  }
+}
+
+export type DocumentUploadSource = UploadSource;
+
 function storageRoot() {
   return resolve(process.env.DOMINO_UPLOAD_DIR ?? "/data/uploads");
+}
+
+export function stageDocumentUpload(
+  source: DocumentUploadSource,
+  maximumBytes = MAX_FILE_BYTES,
+) {
+  return stageUpload(source, maximumBytes, () => new DocumentUploadSizeError());
 }
 
 async function assertAssociation(
@@ -57,8 +79,10 @@ export async function listDocuments(
   db: Database,
   householdId: string,
   includeTrash = false,
-  claimIds?: string[],
+  claimIds?: readonly string[],
+  window?: ListWindow,
 ) {
+  const { limit, offset } = normalizeListWindow(window, MAX_LIST_LIMIT + 1);
   const rows = await db
     .select()
     .from(schema.documents)
@@ -76,7 +100,9 @@ export async function listDocuments(
             : isNull(schema.documents.claimId),
       ),
     )
-    .orderBy(schema.documents.createdAt);
+    .orderBy(desc(schema.documents.createdAt), desc(schema.documents.id))
+    .limit(limit)
+    .offset(offset);
   return rows;
 }
 
@@ -85,7 +111,7 @@ export async function attachDocument(
   householdId: string,
   actorId: string,
   input: {
-    file: File;
+    file: DocumentUploadSource;
     name?: string;
     kind: DocumentKind;
     backend?: "local" | "paperless";
@@ -93,8 +119,11 @@ export async function attachDocument(
     claimId?: string;
   },
 ) {
-  if (input.file.size <= 0 || input.file.size > MAX_FILE_BYTES) {
-    throw new Error("Attachments must be between 1 byte and 50 MiB.");
+  if (
+    input.file.size !== undefined &&
+    (input.file.size <= 0 || input.file.size > MAX_FILE_BYTES)
+  ) {
+    throw new DocumentUploadSizeError();
   }
   if (
     !(await assertAssociation(db, householdId, input.productId, input.claimId))
@@ -111,134 +140,140 @@ export async function attachDocument(
       `This household uses ${backend === "paperless" ? "Paperless-ngx" : "Domino storage"} as its authoritative document backend.`,
     );
   }
-  const bytes = Buffer.from(await input.file.arrayBuffer());
-  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const staged = await stageDocumentUpload(input.file);
+  let stagedOwned = true;
+  const sha256 = staged.sha256;
   const name = (input.name || input.file.name || "attachment").slice(0, 255);
-  const [existing] = await db
-    .select()
-    .from(schema.documents)
-    .where(
-      and(
-        eq(schema.documents.householdId, householdId),
-        input.productId
-          ? eq(schema.documents.productId, input.productId)
-          : isNull(schema.documents.productId),
-        input.claimId
-          ? eq(schema.documents.claimId, input.claimId)
-          : isNull(schema.documents.claimId),
-        eq(schema.documents.kind, input.kind),
-        eq(schema.documents.sha256, sha256),
-        isNull(schema.documents.trashedAt),
-      ),
-    )
-    .limit(1);
-  if (existing) return existing;
-
-  if (backend === "paperless") {
-    const client = await paperlessClientForHousehold(db, householdId);
-    if (!client) {
-      throw new Error(
-        "Paperless-ngx is authoritative, but its URL or token is not configured.",
-      );
-    }
-    const task = await client.upload(
-      new Blob([bytes], { type: input.file.type }),
-      name,
-    );
-    const taskId = String(task);
-    return db.transaction(async (tx) => {
-      const [document] = await tx
-        .insert(schema.documents)
-        .values({
-          householdId,
-          productId: input.productId,
-          claimId: input.claimId,
-          kind: input.kind,
-          backend,
-          name,
-          mimeType: input.file.type || "application/octet-stream",
-          sizeBytes: input.file.size,
-          sha256,
-          paperlessTaskId: taskId,
-          processingStatus: "processing",
-          uploadedByActorId: actorId,
-        })
-        .returning();
-      await tx.insert(schema.auditEvents).values({
-        householdId,
-        actorId,
-        action: "document.attach",
-        resourceType: "document",
-        resourceId: document.id,
-        summary: `Attached ${name}`,
-        metadata: { backend, kind: input.kind },
-      });
-      if (input.claimId) {
-        await tx.insert(schema.claimEvents).values({
-          claimId: input.claimId,
-          actorId,
-          eventType: "document_attached",
-          title: `Attached ${input.kind}`,
-          detail: name,
-          metadata: { documentId: document.id, backend },
-        });
-      }
-      return document;
-    });
-  }
-
-  const key = join(
-    sha256.slice(0, 2),
-    `${randomBytes(20).toString("hex")}.bin`,
-  );
-  const destination = resolve(storageRoot(), key);
-  if (!destination.startsWith(`${storageRoot()}/`))
-    throw new Error("Invalid storage path.");
-  await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
-  await writeFile(destination, bytes, { mode: 0o600, flag: "wx" });
   try {
-    return await db.transaction(async (tx) => {
-      const [document] = await tx
-        .insert(schema.documents)
-        .values({
-          householdId,
-          productId: input.productId,
-          claimId: input.claimId,
-          kind: input.kind,
-          backend,
-          name,
-          mimeType: input.file.type || "application/octet-stream",
-          sizeBytes: input.file.size,
-          sha256,
-          localStorageKey: key,
-          processingStatus: "ready",
-          uploadedByActorId: actorId,
-        })
-        .returning();
-      await tx.insert(schema.auditEvents).values({
-        householdId,
-        actorId,
-        action: "document.attach",
-        resourceType: "document",
-        resourceId: document.id,
-        summary: `Attached ${name}`,
-        metadata: { backend, kind: input.kind },
-      });
-      if (input.claimId) {
-        await tx.insert(schema.claimEvents).values({
-          claimId: input.claimId,
-          actorId,
-          eventType: "document_attached",
-          title: `Attached ${input.kind}`,
-          detail: name,
-          metadata: { documentId: document.id, backend },
-        });
+    const [existing] = await db
+      .select()
+      .from(schema.documents)
+      .where(
+        and(
+          eq(schema.documents.householdId, householdId),
+          input.productId
+            ? eq(schema.documents.productId, input.productId)
+            : isNull(schema.documents.productId),
+          input.claimId
+            ? eq(schema.documents.claimId, input.claimId)
+            : isNull(schema.documents.claimId),
+          eq(schema.documents.kind, input.kind),
+          eq(schema.documents.sha256, sha256),
+          isNull(schema.documents.trashedAt),
+        ),
+      )
+      .limit(1);
+    if (existing) return existing;
+
+    if (backend === "paperless") {
+      const client = await paperlessClientForHousehold(db, householdId);
+      if (!client) {
+        throw new Error(
+          "Paperless-ngx is authoritative, but its URL or token is not configured.",
+        );
       }
-      return document;
-    });
-  } catch (cause) {
-    await unlink(destination).catch(() => undefined);
-    throw cause;
+      const task = await client.upload(
+        await openAsBlob(staged.path, { type: input.file.type }),
+        name,
+      );
+      const taskId = String(task);
+      return db.transaction(async (tx) => {
+        const [document] = await tx
+          .insert(schema.documents)
+          .values({
+            householdId,
+            productId: input.productId,
+            claimId: input.claimId,
+            kind: input.kind,
+            backend,
+            name,
+            mimeType: input.file.type || "application/octet-stream",
+            sizeBytes: staged.size,
+            sha256,
+            paperlessTaskId: taskId,
+            processingStatus: "processing",
+            uploadedByActorId: actorId,
+          })
+          .returning();
+        await tx.insert(schema.auditEvents).values({
+          householdId,
+          actorId,
+          action: "document.attach",
+          resourceType: "document",
+          resourceId: document.id,
+          summary: `Attached ${name}`,
+          metadata: { backend, kind: input.kind },
+        });
+        if (input.claimId) {
+          await tx.insert(schema.claimEvents).values({
+            claimId: input.claimId,
+            actorId,
+            eventType: "document_attached",
+            title: `Attached ${input.kind}`,
+            detail: name,
+            metadata: { documentId: document.id, backend },
+          });
+        }
+        return document;
+      });
+    }
+
+    const key = join(
+      sha256.slice(0, 2),
+      `${randomBytes(20).toString("hex")}.bin`,
+    );
+    const destination = resolve(storageRoot(), key);
+    if (!destination.startsWith(`${storageRoot()}/`))
+      throw new Error("Invalid storage path.");
+    await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
+    await rename(staged.path, destination);
+    stagedOwned = false;
+    try {
+      return await db.transaction(async (tx) => {
+        const [document] = await tx
+          .insert(schema.documents)
+          .values({
+            householdId,
+            productId: input.productId,
+            claimId: input.claimId,
+            kind: input.kind,
+            backend,
+            name,
+            mimeType: input.file.type || "application/octet-stream",
+            sizeBytes: staged.size,
+            sha256,
+            localStorageKey: key,
+            processingStatus: "ready",
+            uploadedByActorId: actorId,
+          })
+          .returning();
+        await tx.insert(schema.auditEvents).values({
+          householdId,
+          actorId,
+          action: "document.attach",
+          resourceType: "document",
+          resourceId: document.id,
+          summary: `Attached ${name}`,
+          metadata: { backend, kind: input.kind },
+        });
+        if (input.claimId) {
+          await tx.insert(schema.claimEvents).values({
+            claimId: input.claimId,
+            actorId,
+            eventType: "document_attached",
+            title: `Attached ${input.kind}`,
+            detail: name,
+            metadata: { documentId: document.id, backend },
+          });
+        }
+        return document;
+      });
+    } catch (cause) {
+      await unlink(destination).catch(() => undefined);
+      throw cause;
+    }
+  } finally {
+    if (stagedOwned) await unlink(staged.path).catch(() => undefined);
   }
 }
 
@@ -332,6 +367,7 @@ export async function refreshPaperlessDocument(
   db: Database,
   householdId: string,
   documentId: string,
+  existingClient?: PaperlessClient,
 ) {
   const [document] = await db
     .select()
@@ -345,7 +381,8 @@ export async function refreshPaperlessDocument(
     .limit(1);
   if (!document?.paperlessTaskId || document.backend !== "paperless")
     return document ?? null;
-  const client = await paperlessClientForHousehold(db, householdId);
+  const client =
+    existingClient ?? (await paperlessClientForHousehold(db, householdId));
   if (!client) throw new Error("Paperless-ngx is not configured.");
   const task = await client.getTask(document.paperlessTaskId);
   if (!task || !["SUCCESS", "FAILURE"].includes(task.status)) return document;
@@ -393,7 +430,9 @@ export async function openLocalDocument(
   if (!fileStat?.isFile()) return null;
   return {
     document,
-    body: Readable.toWeb(createReadStream(path)) as ReadableStream<Uint8Array>,
+    body: Readable.toWeb(
+      createReadStream(path),
+    ) as unknown as ReadableStream<Uint8Array>,
   };
 }
 
@@ -510,25 +549,110 @@ export async function restoreDocument(
   });
 }
 
-export async function purgeExpiredDocuments(db: Database) {
+export async function purgeExpiredDocuments(
+  db: Database,
+  options: {
+    now?: Date;
+    unlinkFile?: typeof unlink;
+    limit?: number;
+  } = {},
+) {
+  const now = options.now ?? new Date();
+  const unlinkFile = options.unlinkFile ?? unlink;
+  const limit = Math.min(100, Math.max(1, Math.trunc(options.limit ?? 25)));
   const expired = await db
     .select()
     .from(schema.documents)
     .where(
       and(
         eq(schema.documents.backend, "local"),
-        lt(schema.documents.purgeAfter, new Date()),
+        lt(schema.documents.purgeAfter, now),
       ),
-    );
+    )
+    .orderBy(asc(schema.documents.purgeAfter), asc(schema.documents.id))
+    .limit(limit);
   for (const document of expired) {
-    if (document.localStorageKey) {
-      await unlink(resolve(storageRoot(), document.localStorageKey)).catch(
-        () => undefined,
-      );
+    await db.transaction(async (tx) => {
+      const [locked] = await tx
+        .select({
+          id: schema.documents.id,
+          householdId: schema.documents.householdId,
+          localStorageKey: schema.documents.localStorageKey,
+          name: schema.documents.name,
+        })
+        .from(schema.documents)
+        .where(
+          and(
+            eq(schema.documents.id, document.id),
+            eq(schema.documents.backend, "local"),
+            lt(schema.documents.purgeAfter, now),
+          ),
+        )
+        .for("update")
+        .limit(1);
+      if (!locked) return;
+      if (locked.localStorageKey) {
+        await tx
+          .insert(schema.documentPurgeJobs)
+          .values({
+            householdId: locked.householdId,
+            documentId: locked.id,
+            storageKey: locked.localStorageKey,
+            nextAttemptAt: now,
+          })
+          .onConflictDoNothing();
+      }
+      await tx
+        .delete(schema.documents)
+        .where(eq(schema.documents.id, locked.id));
+      await tx.insert(schema.auditEvents).values({
+        householdId: locked.householdId,
+        action: "document.purge.schedule",
+        resourceType: "document",
+        resourceId: locked.id,
+        summary: `Scheduled permanent deletion of ${locked.name}`,
+        metadata: { storageKey: locked.localStorageKey },
+      });
+    });
+  }
+
+  const jobs = await db
+    .select()
+    .from(schema.documentPurgeJobs)
+    .where(lte(schema.documentPurgeJobs.nextAttemptAt, now))
+    .orderBy(
+      asc(schema.documentPurgeJobs.nextAttemptAt),
+      asc(schema.documentPurgeJobs.id),
+    )
+    .limit(limit);
+  for (const job of jobs) {
+    const destination = resolve(storageRoot(), job.storageKey);
+    try {
+      if (!destination.startsWith(`${storageRoot()}/`)) {
+        throw new Error("The purge job contains an invalid storage path.");
+      }
+      await unlinkFile(destination).catch((cause: NodeJS.ErrnoException) => {
+        if (cause.code !== "ENOENT") throw cause;
+      });
+      await db
+        .delete(schema.documentPurgeJobs)
+        .where(eq(schema.documentPurgeJobs.id, job.id));
+    } catch (cause) {
+      const attempts = job.attempts + 1;
+      const retryMinutes = Math.min(24 * 60, 2 ** Math.min(attempts, 10));
+      await db
+        .update(schema.documentPurgeJobs)
+        .set({
+          attempts,
+          lastError:
+            cause instanceof Error
+              ? cause.message.slice(0, 2_000)
+              : "Unknown error",
+          nextAttemptAt: new Date(now.getTime() + retryMinutes * 60_000),
+          updatedAt: now,
+        })
+        .where(eq(schema.documentPurgeJobs.id, job.id));
     }
-    await db
-      .delete(schema.documents)
-      .where(eq(schema.documents.id, document.id));
   }
   return expired.length;
 }

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pendingForm } from "$lib/form-pending";
   import { KeyRound } from "lucide-svelte";
   let { data, form } = $props();
 </script>
@@ -21,7 +22,7 @@
       >
         {form.error}
       </div>{/if}
-    <form method="POST" class="mt-6 space-y-4">
+    <form method="POST" class="mt-6 space-y-4" use:pendingForm>
       <label class="block"
         ><span class="text-xs font-bold text-muted uppercase">New password</span
         ><input
@@ -45,7 +46,7 @@
           class="mt-2 min-h-12 w-full border border-rule px-3"
         /></label
       >
-      <button class="min-h-12 w-full bg-ink text-sm font-bold text-white"
+      <button data-pending-label="Saving password…" class="min-h-12 w-full bg-ink text-sm font-bold text-white"
         >Set password</button
       >
     </form>

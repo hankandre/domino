@@ -7,6 +7,7 @@ data:
   HOST: 0.0.0.0
   PORT: "3000"
   BODY_SIZE_LIMIT: 55M
+  DATABASE_POOL_SIZE: "10"
   DOMINO_DEMO_MODE: "false"
   ORIGIN: https://domino.example.test
   PAPERLESS_URL: https://paperless.example.test
@@ -17,13 +18,16 @@ data:
   DOMINO_OIDC_CLIENT_ID: replace-me
   DOMINO_OIDC_CLIENT_SECRET_FILE: /run/secrets/auth/oidc-client-secret
   DOMINO_SESSION_SECRET_FILE: /run/secrets/auth/session-secret
+  DOMINO_CREDENTIAL_ENCRYPTION_KEY_FILE: /run/secrets/auth/credential-encryption-key
   DOMINO_OIDC_SCOPES: openid profile email groups
   DOMINO_OIDC_ALLOWED_GROUPS: ""
   DOMINO_OIDC_REQUIRE_VERIFIED_EMAIL: "true"
   DOMINO_OIDC_AUTO_PROVISION: "true"
   DOMINO_OIDC_LINK_EXISTING_BY_EMAIL: "false"
   DOMINO_OIDC_DEFAULT_ROLE: Member
+  DOMINO_OIDC_DEFAULT_CLAIM_PRESET: all
   DOMINO_OIDC_BOOTSTRAP_OWNER_EMAIL: owner@example.test
+  DOMINO_OIDC_HOUSEHOLD_ID: ""
   DOMINO_HOUSEHOLD_NAME: Home
   DOMINO_HOUSEHOLD_SLUG: home
   DOMINO_SESSION_TTL_HOURS: "168"

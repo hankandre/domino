@@ -7,6 +7,9 @@ target
 .env.*
 !.env.example
 .impeccable
+.agents
+.vitest-attachments
+src/routes/__screenshots__
 coverage
 data
 secrets

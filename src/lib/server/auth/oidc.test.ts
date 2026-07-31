@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test } from "bun:test";
 import {
   getOidcConfig,
   groupsAreAllowed,
@@ -26,7 +26,35 @@ describe("OIDC configuration", () => {
       providerName: "Pocket ID",
       scopes: "openid profile email groups",
       allowedGroups: ["household", "domino-users"],
+      autoProvision: true,
+      defaultRole: "Member",
+      defaultClaimPreset: "all",
     });
+  });
+
+  test("accepts an explicit least-privilege claim preset", () => {
+    const config = getOidcConfig({
+      DOMINO_OIDC_ISSUER: "https://id.home.example",
+      DOMINO_OIDC_CLIENT_ID: "domino-client",
+      DOMINO_OIDC_CLIENT_SECRET: "secret",
+      DOMINO_SESSION_SECRET: "a-session-secret-that-is-at-least-32-characters",
+      DOMINO_OIDC_DEFAULT_CLAIM_PRESET: "attention",
+    });
+
+    expect(config?.defaultClaimPreset).toBe("attention");
+  });
+
+  test("rejects an unknown claim preset", () => {
+    expect(() =>
+      getOidcConfig({
+        DOMINO_OIDC_ISSUER: "https://id.home.example",
+        DOMINO_OIDC_CLIENT_ID: "domino-client",
+        DOMINO_OIDC_CLIENT_SECRET: "secret",
+        DOMINO_SESSION_SECRET:
+          "a-session-secret-that-is-at-least-32-characters",
+        DOMINO_OIDC_DEFAULT_CLAIM_PRESET: "everything",
+      }),
+    ).toThrow("DOMINO_OIDC_DEFAULT_CLAIM_PRESET");
   });
 });
 

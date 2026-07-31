@@ -1,11 +1,5 @@
 <script lang="ts">
-  import {
-    Box,
-    ChevronRight,
-    FileText,
-    ImagePlus,
-    MessageSquareText,
-  } from "lucide-svelte";
+  import { Box, FileText, ImagePlus, MessageSquareText } from "lucide-svelte";
   import type { ProductSummary } from "$lib/types";
   import StatusBadge from "./StatusBadge.svelte";
 
@@ -35,10 +29,8 @@
 <article
   class="group flex flex-col overflow-hidden border border-rule bg-sheet shadow-[0_1px_0_rgba(23,32,51,0.04)] transition-[transform,box-shadow] duration-300 ease-out hover:-translate-y-1 hover:shadow-sheet"
 >
-  <a
-    href={`/products/${product.id}`}
-    class="relative block aspect-[16/9] overflow-hidden border-b border-rule bg-[#ecebe5]"
-    aria-label={`Open ${product.brand} ${product.name}`}
+  <div
+    class="relative block aspect-[16/9] overflow-hidden border-b border-rule bg-surface-muted"
   >
     {#if product.imageUrl}
       <img
@@ -46,15 +38,19 @@
         alt=""
         class="h-full w-full object-cover transition-transform duration-500 ease-out group-hover:scale-[1.035]"
         loading="lazy"
+        decoding="async"
       />
     {:else}
       <div
-        class="relative grid h-full place-items-center overflow-hidden bg-[#e7e9e6] text-ink"
+        class="relative grid h-full place-items-center overflow-hidden bg-surface-muted text-ink"
       >
         <div
-          class="absolute -right-6 -bottom-10 text-[8.5rem] leading-none font-black tracking-[-0.08em] text-ink/[0.045]"
+          aria-hidden="true"
+          class="absolute -right-3 -bottom-3 grid grid-cols-2 gap-2 opacity-[0.055]"
         >
-          {product.brand.slice(0, 2).toUpperCase()}
+          {#each Array(4) as _}
+            <span class="size-10 border-8 border-ink"></span>
+          {/each}
         </div>
         <div class="relative text-center">
           <span
@@ -92,7 +88,7 @@
         </StatusBadge>
       {/if}
     </div>
-  </a>
+  </div>
 
   <div class="flex flex-1 flex-col p-4">
     <div class="flex items-start justify-between gap-4">
@@ -103,16 +99,14 @@
         <h2
           class="mt-1 text-[1.12rem] leading-tight font-bold tracking-[-0.025em]"
         >
-          <a href={`/products/${product.id}`} class="hover:text-orange"
+          <a
+            href={`/products/${product.id}`}
+            class="inline-flex min-h-11 items-center hover:text-orange"
             >{product.name}</a
           >
         </h2>
         <p class="mt-1 text-sm text-muted">{product.model}</p>
       </div>
-      <ChevronRight
-        class="mt-1 shrink-0 text-muted transition-transform duration-300 group-hover:translate-x-1"
-        size={19}
-      />
     </div>
 
     <dl class="mt-4 grid grid-cols-2 gap-x-4 border-y border-rule py-3 text-sm">
@@ -141,10 +135,10 @@
 
     {#if product.activeClaim}
       <div class="mt-3 bg-orange-soft p-3 text-sm">
-        <div class="font-bold text-[#7e2f15]">
+        <div class="font-bold text-orange-ink">
           {product.activeClaim.summary}
         </div>
-        <div class="mt-1 text-[#7e2f15]/80">
+        <div class="mt-1 text-orange-ink/80">
           {product.activeClaim.nextAction}
         </div>
       </div>
@@ -170,20 +164,11 @@
       >
       {#if product.activeClaim}
         <a
-          href={`/products/${product.id}`}
-          class="ml-auto text-muted hover:text-ink">View product</a
-        >
-        <a
           href={`/claims/${product.activeClaim.id}`}
-          class="flex min-h-8 items-center gap-1 bg-ink px-2.5 text-white hover:bg-orange"
+          class="ml-auto flex min-h-11 items-center gap-1 bg-ink px-2.5 text-white hover:bg-orange"
         >
-          Manage claim <ChevronRight size={13} />
+          Manage claim
         </a>
-      {:else}
-        <a
-          href={`/products/${product.id}`}
-          class="ml-auto text-ink hover:text-orange">View record</a
-        >
       {/if}
     </div>
   </div>

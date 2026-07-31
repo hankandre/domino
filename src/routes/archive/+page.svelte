@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Archive } from "lucide-svelte";
   import PageHeader from "$lib/components/PageHeader.svelte";
+  import Pagination from "$lib/components/Pagination.svelte";
   import ProductCard from "$lib/components/ProductCard.svelte";
   let { data } = $props();
 </script>
@@ -34,4 +35,10 @@
       </div>
     </div>
   {/if}
+  <Pagination
+    page={data.archivePage?.page ?? 1}
+    previousHref={data.archivePage?.previousHref ?? null}
+    nextHref={data.archivePage?.nextHref ?? null}
+    label="archive"
+  />
 </div>

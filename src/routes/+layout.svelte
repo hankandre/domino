@@ -12,12 +12,15 @@
   } from "lucide-svelte";
   import { LogOut } from "lucide-svelte";
   import { page } from "$app/state";
+  import { pendingForm } from "$lib/form-pending";
 
   let { children, data } = $props();
   let mobileNavOpen = $state(false);
   let navigationDrawer = $state<HTMLElement>();
   let navigationTrigger = $state<HTMLButtonElement>();
   let navigationClose = $state<HTMLButtonElement>();
+  let desktopNavigation = $state(false);
+  let bodyOverflowBeforeDrawer = "";
   let isAuthPage = $derived(
     page.url.pathname === "/login" ||
       page.url.pathname.startsWith("/invite/") ||
@@ -64,7 +67,24 @@
   }
 
   $effect(() => {
+    const desktop = window.matchMedia("(min-width: 64rem)");
+    const synchronize = () => {
+      desktopNavigation = desktop.matches;
+      if (desktop.matches) {
+        mobileNavOpen = false;
+        document.body.style.overflow = bodyOverflowBeforeDrawer;
+      }
+    };
+    synchronize();
+    desktop.addEventListener("change", synchronize);
+    return () => desktop.removeEventListener("change", synchronize);
+  });
+
+  $effect(() => {
     if (!mobileNavOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    bodyOverflowBeforeDrawer = previousOverflow;
+    document.body.style.overflow = "hidden";
     queueMicrotask(() => navigationClose?.focus());
     const handleKeydown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -90,7 +110,10 @@
       }
     };
     document.addEventListener("keydown", handleKeydown);
-    return () => document.removeEventListener("keydown", handleKeydown);
+    return () => {
+      document.removeEventListener("keydown", handleKeydown);
+      document.body.style.overflow = previousOverflow;
+    };
   });
 </script>
 
@@ -119,6 +142,8 @@
       class:translate-x-0={mobileNavOpen}
       class:visible={mobileNavOpen}
       aria-label="Primary navigation"
+      role={mobileNavOpen && !desktopNavigation ? "dialog" : undefined}
+      aria-modal={mobileNavOpen && !desktopNavigation ? "true" : undefined}
     >
       <div
         class="flex h-20 items-center justify-between border-b border-white/12 px-5"
@@ -164,13 +189,14 @@
                 ? "page"
                 : undefined}
               onclick={() => (mobileNavOpen = false)}
-              class={`group flex min-h-11 items-center gap-3 px-3 text-sm font-semibold transition-colors ${
+              class={[
+                "group flex min-h-11 items-center gap-3 px-3 text-sm font-semibold transition-colors",
                 page.url.pathname === item.href ||
                 (item.href !== "/" &&
                   page.url.pathname.startsWith(`${item.href}/`))
                   ? "bg-white text-ink"
-                  : "text-white/70 hover:bg-white/10 hover:text-white"
-              }`}
+                  : "text-white/70 hover:bg-white/10 hover:text-white",
+              ]}
             >
               <Icon size={18} strokeWidth={1.8} />
               <span>{item.label}</span>
@@ -189,9 +215,10 @@
               {data.actor.user.email}
             </div>
             {#if !data.demoMode}
-              <form method="POST" action="/auth/logout">
+              <form method="POST" action="/auth/logout" use:pendingForm>
                 <button
-                  class="mt-2 flex min-h-9 items-center gap-2 text-xs font-bold text-white/65 hover:text-white"
+                  data-pending-label="Signing out…"
+                  class="mt-2 flex min-h-11 items-center gap-2 text-xs font-bold text-white/65 hover:text-white"
                 >
                   <LogOut size={15} /> Sign out
                 </button>
@@ -222,7 +249,7 @@
             Document store
           </div>
           <div class="mt-2 flex items-center gap-2 text-xs font-semibold">
-            <span class="size-2 rounded-full bg-[#67d7a4]"></span>
+            <span class="size-2 rounded-full bg-green-bright"></span>
             {data.documentStore}
           </div>
         </div>
@@ -232,7 +259,7 @@
     {#if mobileNavOpen}
       <button
         class="fixed inset-0 z-40 bg-ink/45 lg:hidden"
-        aria-label="Close navigation"
+        aria-hidden="true"
         tabindex="-1"
         onclick={closeMobileNavigation}
       ></button>
@@ -240,8 +267,8 @@
 
     <div
       class="min-w-0"
-      inert={mobileNavOpen}
-      aria-hidden={mobileNavOpen ? "true" : undefined}
+      inert={mobileNavOpen && !desktopNavigation}
+      aria-hidden={mobileNavOpen && !desktopNavigation ? "true" : undefined}
     >
       <header
         class="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-rule bg-paper/95 px-4 backdrop-blur-sm sm:px-6 lg:hidden"
@@ -273,7 +300,7 @@
         {#if canAny(["products:create", "warranties:write"])}
           <a
             href="/products/new"
-            class="grid size-10 place-items-center bg-ink text-white"
+            class="grid size-11 place-items-center bg-ink text-white"
             aria-label="Add product"
           >
             <span class="text-2xl font-light">+</span>

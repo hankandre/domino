@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test } from "bun:test";
 import {
   consumeLoginAttempt,
   inspectInvitation,
@@ -6,14 +6,17 @@ import {
 } from "./local";
 
 describe("local login throttling", () => {
-  test("limits an address even when it rotates email addresses", () => {
+  test("does not let a shared reverse-proxy address lock out other identities", () => {
     const address = `test-${crypto.randomUUID()}`;
-    for (let attempt = 0; attempt < 30; attempt += 1) {
-      expect(
-        consumeLoginAttempt(address, `person-${attempt}@example.test`),
-      ).toBe(true);
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      expect(consumeLoginAttempt(address, "first-person@example.test")).toBe(
+        true,
+      );
     }
-    expect(consumeLoginAttempt(address, "another@example.test")).toBe(false);
+    expect(consumeLoginAttempt(address, "first-person@example.test")).toBe(
+      false,
+    );
+    expect(consumeLoginAttempt(address, "another@example.test")).toBe(true);
   });
 
   test("rejects malformed public tokens before reaching the database", async () => {

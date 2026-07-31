@@ -1,6 +1,7 @@
 <script lang="ts">
   import { ArrowRight, CircleAlert, ClipboardCheck, Plus } from "lucide-svelte";
   import PageHeader from "$lib/components/PageHeader.svelte";
+  import Pagination from "$lib/components/Pagination.svelte";
   import StatusBadge from "$lib/components/StatusBadge.svelte";
 
   let { data } = $props();
@@ -46,7 +47,7 @@
       <div>
         <h2 id="open-claims-heading" class="text-xl font-bold">Open claims</h2>
         <p class="mt-1 text-sm text-muted">
-          {openClaims.length} requiring follow-through
+          {openClaims.length} requiring follow-through on this page
         </p>
       </div>
     </div>
@@ -121,7 +122,7 @@
       <p class="mt-1 text-sm text-muted">
         {completedClaims.length} completed {completedClaims.length === 1
           ? "claim"
-          : "claims"}
+          : "claims"} on this page
       </p>
     </div>
     {#if completedClaims.length}
@@ -150,4 +151,10 @@
       </div>
     {/if}
   </section>
+  <Pagination
+    page={data.claimsPage?.page ?? 1}
+    previousHref={data.claimsPage?.previousHref ?? null}
+    nextHref={data.claimsPage?.nextHref ?? null}
+    label="claims"
+  />
 </div>

@@ -7,11 +7,18 @@
     Trash2,
   } from "lucide-svelte";
   import PageHeader from "$lib/components/PageHeader.svelte";
+  import Pagination from "$lib/components/Pagination.svelte";
+  import { invalidateAll } from "$app/navigation";
+  import { networkError, responseError } from "$lib/api-errors";
+  import { dominoApi } from "$lib/api-client";
+  import { uploadDocument } from "$lib/uploads";
   let { data } = $props();
   let uploading = $state(false);
   let paperlessQuery = $state("");
   let paperlessResults = $state<Array<{ id: number; title: string }>>([]);
   let searching = $state(false);
+  let linkingId = $state<number | null>(null);
+  let trashingId = $state<string | null>(null);
   let documentKind = $state("manual");
   let message = $state("");
   let errorMessage = $state("");
@@ -23,52 +30,84 @@
     uploading = true;
     message = "";
     errorMessage = "";
-    const body = new FormData();
-    body.set("file", file);
-    body.set("kind", documentKind);
-    const response = await fetch("/api/v1/documents", { method: "POST", body });
-    uploading = false;
-    input.value = "";
-    if (!response.ok) {
-      const result = await response.json().catch(() => ({}));
-      errorMessage = result.error ?? "The document could not be attached.";
-      return;
+    try {
+      const response = await uploadDocument(file, { kind: documentKind });
+      if (!response.ok) {
+        errorMessage = await responseError(
+          response,
+          "The document could not be attached.",
+        );
+        return;
+      }
+      message = "Document attached.";
+      if (!data.demoMode) await invalidateAll();
+    } catch (cause) {
+      errorMessage = networkError(cause, "The document could not be attached.");
+    } finally {
+      uploading = false;
+      input.value = "";
     }
-    message = "Document attached.";
-    if (data.demoMode) return;
-    location.reload();
   }
 
   async function searchPaperless() {
     if (!paperlessQuery.trim()) return;
     searching = true;
-    const response = await fetch(
-      `/api/v1/paperless/search?q=${encodeURIComponent(paperlessQuery)}`,
-    );
-    const result = await response.json();
-    paperlessResults = response.ok ? result.documents : [];
-    errorMessage = response.ok
-      ? ""
-      : (result.error ?? "Paperless search failed.");
-    searching = false;
+    message = "";
+    errorMessage = "";
+    try {
+      const response = await dominoApi.api.v1.paperless.search.$get({
+        query: { q: paperlessQuery },
+      });
+      if (!response.ok) {
+        paperlessResults = [];
+        errorMessage = await responseError(
+          response,
+          "Paperless search failed.",
+        );
+        return;
+      }
+      const result = (await response.json()) as {
+        documents: Array<{ id: number; title: string }>;
+      };
+      paperlessResults = result.documents;
+      message = result.documents.length
+        ? `${result.documents.length} Paperless document${result.documents.length === 1 ? "" : "s"} found.`
+        : "No Paperless documents matched that search.";
+    } catch (cause) {
+      paperlessResults = [];
+      errorMessage = networkError(cause, "Paperless search failed.");
+    } finally {
+      searching = false;
+    }
   }
 
   async function linkPaperless(id: number) {
-    const response = await fetch("/api/v1/documents/link-paperless", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ paperlessDocumentId: id, kind: "other" }),
-    });
-    if (response.ok) {
-      if (data.demoMode) {
-        message = "Paperless document linked.";
+    if (linkingId !== null) return;
+    linkingId = id;
+    message = "";
+    errorMessage = "";
+    try {
+      const response = await dominoApi.api.v1.documents[
+        "link-paperless"
+      ].$post({
+        json: { paperlessDocumentId: id, kind: "other" },
+      });
+      if (!response.ok) {
+        errorMessage = await responseError(
+          response,
+          "The Paperless document could not be linked.",
+        );
         return;
       }
-      location.reload();
-    } else {
-      const result = await response.json().catch(() => ({}));
-      errorMessage =
-        result.error ?? "The Paperless document could not be linked.";
+      message = "Paperless document linked.";
+      if (!data.demoMode) await invalidateAll();
+    } catch (cause) {
+      errorMessage = networkError(
+        cause,
+        "The Paperless document could not be linked.",
+      );
+    } finally {
+      linkingId = null;
     }
   }
 
@@ -81,19 +120,26 @@
       return;
     message = "";
     errorMessage = "";
-    const response = await fetch(`/api/v1/documents/${id}`, {
-      method: "DELETE",
-    });
-    if (!response.ok) {
-      const result = await response.json().catch(() => ({}));
-      errorMessage = result.error ?? "The document could not be removed.";
-      return;
-    }
-    if (data.demoMode) {
+    if (trashingId !== null) return;
+    trashingId = id;
+    try {
+      const response = await dominoApi.api.v1.documents[":id"].$delete({
+        param: { id },
+      });
+      if (!response.ok) {
+        errorMessage = await responseError(
+          response,
+          "The document could not be removed.",
+        );
+        return;
+      }
       message = "Document removed.";
-      return;
+      if (!data.demoMode) await invalidateAll();
+    } catch (cause) {
+      errorMessage = networkError(cause, "The document could not be removed.");
+    } finally {
+      trashingId = null;
     }
-    location.reload();
   }
 </script>
 
@@ -149,9 +195,7 @@
     >
       {message}
     </div>{/if}
-  {#if data.defaultDocumentBackend === "paperless" &&
-  data.canAttachDocuments &&
-  data.canDiscoverPaperless}
+  {#if data.defaultDocumentBackend === "paperless" && data.canAttachDocuments && data.canDiscoverPaperless}
     <details class="mt-6 border border-rule bg-sheet p-4">
       <summary class="cursor-pointer text-sm font-bold"
         >Link an existing Paperless-ngx document</summary
@@ -184,8 +228,9 @@
               <button
                 type="button"
                 onclick={() => linkPaperless(document.id)}
-                class="min-h-9 border border-rule px-3 text-xs font-bold"
-                >Link</button
+                disabled={linkingId !== null}
+                class="min-h-11 border border-rule px-3 text-xs font-bold"
+                >{linkingId === document.id ? "Linking…" : "Link"}</button
               >
             </div>
           {/each}
@@ -197,17 +242,18 @@
     <div class="mt-7 border-t border-ink">
       {#each data.documents as document}
         <div
-          class="group grid w-full grid-cols-[auto_1fr_auto_auto] items-center gap-4 border-b border-rule py-4 text-left"
+          class="group grid w-full grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-4 border-b border-rule py-4 text-left"
         >
           <span
-            class="grid size-11 place-items-center bg-blue-soft text-[#294968]"
+            class="grid size-11 place-items-center bg-blue-soft text-blue-ink"
             >{#if document.kind === "receipt"}<ReceiptText
                 size={20}
               />{:else}<FileText size={20} />{/if}</span
           >
-          <span
-            ><span class="block font-bold">{document.name}</span><span
-              class="mt-1 block text-xs text-muted"
+          <span class="min-w-0"
+            ><span class="block break-words font-bold" title={document.name}
+              >{document.name}</span
+            ><span class="mt-1 block text-xs text-muted"
               >{document.productId
                 ? data.productNames[document.productId]
                 : "Household"} · {document.kind} · {document.backend ===
@@ -223,7 +269,7 @@
                 : `/api/v1/documents/${document.id}/content`}
               target="_blank"
               rel="noreferrer"
-              class="grid size-10 place-items-center text-muted hover:text-ink"
+              class="grid size-11 place-items-center text-muted hover:text-ink"
               aria-label={`Open ${document.name}`}
             >
               <ExternalLink size={17} />
@@ -236,7 +282,8 @@
           {#if data.canManageDocuments}
             <button
               onclick={() => trashDocument(document.id, document.name)}
-              class="grid size-10 place-items-center text-muted hover:bg-red-soft hover:text-red"
+              disabled={trashingId !== null}
+              class="grid size-11 place-items-center text-muted hover:bg-red-soft hover:text-red"
               aria-label={`Remove ${document.name}`}
             >
               <Trash2 size={16} />
@@ -258,4 +305,10 @@
       </div>
     </div>
   {/if}
+  <Pagination
+    page={data.documentsPage?.page ?? 1}
+    previousHref={data.documentsPage?.previousHref ?? null}
+    nextHref={data.documentsPage?.nextHref ?? null}
+    label="documents"
+  />
 </div>

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test } from "bun:test";
 import {
   decryptPaperlessToken,
   deploymentPaperlessConfiguration,
@@ -125,5 +125,32 @@ describe("Paperless integration credentials", () => {
         source,
       }),
     ).toThrow("Enter a Paperless API token");
+  });
+
+  test("does not follow redirects or trust a deceptive response length", async () => {
+    let requestInit: RequestInit | undefined;
+    const oversizedJson = `{"count":0,"results":[],"padding":"${"x".repeat(
+      2 * 1024 * 1024,
+    )}"}`;
+    const client = new PaperlessClient(
+      "https://paperless.example.test/",
+      "secret-token",
+      (async (_input, init) => {
+        requestInit = init;
+        return new Response(oversizedJson, {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+            "content-length": "1",
+          },
+        });
+      }) as typeof fetch,
+    );
+
+    await expect(client.search("receipt")).rejects.toThrow(
+      "Paperless response is too large",
+    );
+    expect(requestInit?.redirect).toBe("error");
+    expect(requestInit?.signal).toBeInstanceOf(AbortSignal);
   });
 });

@@ -7,9 +7,14 @@
   --color-muted: #626a7b;
   --color-rule: #d8d9d3;
   --color-orange: #c84318;
+  --color-orange-ink: #7d3218;
   --color-orange-soft: #fff0e8;
+  --color-blue-ink: #294968;
+  --color-blue-border: #aebed0;
   --color-blue-soft: #eaf0f7;
+  --color-surface-muted: #ecebe5;
   --color-green: #176b4d;
+  --color-green-bright: #67d7a4;
   --color-green-soft: #e7f3ed;
   --color-red: #a3332b;
   --color-red-soft: #fae9e7;
@@ -49,6 +54,43 @@ input,
 select,
 textarea {
   font: inherit;
+}
+
+button,
+select,
+textarea,
+input:is(
+  [type="text"],
+  [type="email"],
+  [type="password"],
+  [type="search"],
+  [type="url"],
+  [type="tel"],
+  [type="number"],
+  [type="date"],
+  [type="file"]
+) {
+  min-block-size: 2.75rem;
+}
+
+:where(summary) {
+  min-block-size: 2.75rem;
+  align-items: center;
+}
+
+button:has(> svg:only-child),
+a[aria-label] {
+  min-block-size: 2.75rem;
+  min-inline-size: 2.75rem;
+}
+
+/* A low-specificity default keeps unstyled text links touchable while allowing
+   layout utilities such as `grid`, `flex`, and explicit sizing to win. */
+:where(a[href]) {
+  display: inline-flex;
+  min-block-size: 2.75rem;
+  min-inline-size: 2.75rem;
+  align-items: center;
 }
 
 button,

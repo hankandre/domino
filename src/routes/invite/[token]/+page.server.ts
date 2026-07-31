@@ -3,6 +3,7 @@ import type { Actions, PageServerLoad } from "./$types";
 import { acceptInvitation, inspectInvitation } from "$lib/server/auth/local";
 import { sessionCookieName, sessionCookieOptions } from "$lib/server/auth/oidc";
 import { readBoundedFormData } from "$lib/server/auth/request";
+import { consumeRateLimit } from "$lib/server/rate-limit";
 
 export const load: PageServerLoad = async ({ params }) => {
   const invitation = await inspectInvitation(params.token);
@@ -17,7 +18,17 @@ export const load: PageServerLoad = async ({ params }) => {
 };
 
 export const actions: Actions = {
-  default: async ({ cookies, params, request }) => {
+  default: async ({ cookies, getClientAddress, params, request }) => {
+    if (
+      !consumeRateLimit(
+        "invitation-accept",
+        getClientAddress(),
+        20,
+        60 * 60_000,
+      ).allowed
+    ) {
+      return fail(429, { error: "Too many attempts. Try again later." });
+    }
     const form = await readBoundedFormData(request);
     if (!form) return fail(413, { error: "The request is too large." });
     const displayName = String(form.get("displayName") ?? "").trim();
