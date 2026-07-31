@@ -114,7 +114,12 @@ jobs:
             DOMINO_OIDC_CLIENT_SECRET_PATH="$secret_file" \
             DOMINO_SESSION_SECRET_PATH="$secret_file" \
             DOMINO_CREDENTIAL_ENCRYPTION_KEY_PATH="$secret_file" \
-              docker compose -f compose.yaml -f compose.published.yaml config
+              docker compose \
+                -f compose.yaml \
+                -f compose.published.yaml \
+                --profile tools \
+                --profile broker \
+                config
           )"
           if grep -q 'build:' <<<"$published"; then
             echo "Published Compose configuration still contains local builds."
