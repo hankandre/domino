@@ -406,11 +406,11 @@ covered by tests.
 - [x] Kubernetes sets `runAsNonRoot`, drops all capabilities, disables privilege
       escalation, uses a read-only root filesystem, disables service-account-token
       mounting, and enables runtime-default seccomp.
-- [ ] Add container smoke tests for health/readiness, migrations, writable upload
+- [x] Add container smoke tests for health/readiness, migrations, writable upload
       storage, read-only filesystem behavior, graceful shutdown, and both CPU
       architectures.
-- [ ] Test Compose upgrade and restore flows with real named volumes.
-- [ ] Add Kubernetes validation and smoke tests for fresh install, migration Job,
+- [x] Test Compose upgrade and restore flows with real named volumes.
+- [x] Add Kubernetes validation and smoke tests for fresh install, migration Job,
       rollout, restricted Pod Security admission, PVC permissions, NetworkPolicy,
       and rollback behavior.
 - [x] Publish an optional Ingress example and an external-database overlay rather
@@ -445,7 +445,7 @@ Run this only after Phases 1–8 are complete for the intended release scope.
 - [x] Run fresh and upgrade database migrations against PostgreSQL.
 - [x] Build and inspect every application, migration, and CLI image; verify the
       configured numeric user and confirm there is no shell or package manager.
-- [ ] Validate Compose and Kubernetes manifests and execute their smoke tests.
+- [x] Validate Compose and Kubernetes manifests and execute their smoke tests.
 - [x] Run the bounded `agent-browser` acceptance check after the Vitest Browser
       Mode suite is green.
 - [x] Run fresh, independent security, performance, accessibility, Svelte, and

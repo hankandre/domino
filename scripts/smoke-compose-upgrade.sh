@@ -34,6 +34,36 @@ wait_for_app() {
   docker compose logs app migrate postgres
   return 1
 }
+wait_for_postgres() {
+  local last_start=""
+  local stable_checks=0
+  local start_time=""
+
+  for _ in $(seq 1 60); do
+    start_time="$(
+      docker compose exec -T postgres psql -U domino -d domino -qAtc \
+        "select pg_postmaster_start_time()" 2>/dev/null || true
+    )"
+    if [[ -n "$start_time" ]]; then
+      if [[ "$start_time" == "$last_start" ]]; then
+        ((stable_checks += 1))
+      else
+        last_start="$start_time"
+        stable_checks=1
+      fi
+      if ((stable_checks >= 3)); then
+        return 0
+      fi
+    else
+      last_start=""
+      stable_checks=0
+    fi
+    sleep 1
+  done
+
+  docker compose logs postgres
+  return 1
+}
 
 docker compose config --quiet
 docker compose up -d app
@@ -52,13 +82,11 @@ docker compose exec -T postgres pg_dump -U domino -d domino --no-owner >"$databa
 upload_marker="$(docker run --rm --user 10001:10001 --mount "type=volume,src=${upload_volume},dst=/data/uploads,readonly" domino:ci -e "process.stdout.write(require('node:fs').readFileSync('/data/uploads/restore-marker','utf8'))")"
 
 docker compose down --volumes
+# PostgreSQL briefly accepts connections through its temporary initialization
+# server before restarting into the final server. Require the same postmaster
+# to answer several times so the restore cannot race that planned restart.
 docker compose up -d postgres
-for _ in $(seq 1 40); do
-  if docker compose exec -T postgres pg_isready -U domino -d domino >/dev/null 2>&1; then
-    break
-  fi
-  sleep 1
-done
+wait_for_postgres
 docker compose exec -T postgres psql -U domino -d domino -v ON_ERROR_STOP=1 <"$database_dump" >/dev/null
 docker volume create "$upload_volume" >/dev/null
 docker run --rm --user 10001:10001 --mount "type=volume,src=${upload_volume},dst=/data/uploads" \

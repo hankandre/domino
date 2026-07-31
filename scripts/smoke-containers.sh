@@ -36,6 +36,35 @@ report_failure() {
   fi
   exit "$status"
 }
+wait_for_postgres() {
+  local last_start=""
+  local stable_checks=0
+  local start_time=""
+
+  for _ in $(seq 1 60); do
+    start_time="$(
+      docker exec "$database" psql -U domino -d domino -qAtc \
+        "select pg_postmaster_start_time()" 2>/dev/null || true
+    )"
+    if [[ -n "$start_time" ]]; then
+      if [[ "$start_time" == "$last_start" ]]; then
+        ((stable_checks += 1))
+      else
+        last_start="$start_time"
+        stable_checks=1
+      fi
+      if ((stable_checks >= 3)); then
+        return 0
+      fi
+    else
+      last_start=""
+      stable_checks=0
+    fi
+    sleep 1
+  done
+
+  return 1
+}
 trap cleanup EXIT
 trap report_failure ERR
 
@@ -50,13 +79,7 @@ docker run -d --name "$database" --network "$network" \
   postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193 \
   >/dev/null
 
-for _ in $(seq 1 40); do
-  if docker exec "$database" pg_isready -U domino -d domino >/dev/null 2>&1; then
-    break
-  fi
-  sleep 1
-done
-docker exec "$database" pg_isready -U domino -d domino >/dev/null
+wait_for_postgres
 
 stage="running database migrations"
 database_url="postgres://domino:${database_password}@${database}:5432/domino"

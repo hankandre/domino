@@ -30,10 +30,13 @@ complete.
 - [x] Bounded desktop/mobile browser acceptance covers keyboard operation, 200%
       zoom, reduced motion, responsive reflow, service-account presets, claim
       management, Paperless settings, and self-hosted Swagger.
-- [ ] Main-branch CI run: pending
-- [ ] Native AMD64 and emulated ARM64 container smoke: pending
-- [ ] Compose named-volume backup/restore smoke: pending
-- [ ] Kubernetes fresh install/migration/rollout/rollback smoke: pending
+- [x] Main-branch CI run
+      [`30664881780`](https://github.com/hankandre/domino/actions/runs/30664881780)
+      passed at `c0a72ee168c2db30c1226b706b62cbe2b3fc1f65`.
+- [x] Native AMD64 and emulated ARM64 container smoke passed in that run.
+- [x] Compose named-volume backup/restore smoke passed in that run.
+- [x] Kubernetes fresh install/migration/rollout/rollback smoke passed in that
+      run under restricted Pod Security admission.
 - [x] Independent security, performance, accessibility, Svelte, and
       maintainability review dispositions are recorded below; no code or design
       release blocker remains.
