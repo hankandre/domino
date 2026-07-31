@@ -1,24 +1,24 @@
 services:
   migrate:
-    build: null
+    build: !reset null
     image: ghcr.io/hankandre/domino-migrate:${DOMINO_IMAGE_TAG:-0.2.0}
 
   app:
-    build: null
+    build: !reset null
     image: ghcr.io/hankandre/domino:${DOMINO_IMAGE_TAG:-0.2.0}
 
   cli:
-    build: null
+    build: !reset null
     image: ghcr.io/hankandre/domino-cli:${DOMINO_CLI_IMAGE_TAG:-0.2.0}
 
   broker-auth:
-    build: null
+    build: !reset null
     image: ghcr.io/hankandre/domino-cli:${DOMINO_CLI_IMAGE_TAG:-0.2.0}
 
   broker:
-    build: null
+    build: !reset null
     image: ghcr.io/hankandre/domino-cli:${DOMINO_CLI_IMAGE_TAG:-0.2.0}
 
   agent-cli:
-    build: null
+    build: !reset null
     image: ghcr.io/hankandre/domino-cli:${DOMINO_CLI_IMAGE_TAG:-0.2.0}

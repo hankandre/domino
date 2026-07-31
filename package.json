@@ -22,7 +22,7 @@
     "bootstrap-owner": "node scripts/bootstrap-owner.mjs",
     "test": "bun test",
     "test:browser": "vitest run --config vitest.browser.config.ts",
-    "test:integration": "bun test src/lib/server/**/*.integration.test.ts",
+    "test:integration": "svelte-kit sync && bun test src/lib/server/**/*.integration.test.ts",
     "cli": "cargo run -p domino-cli --"
   },
   "dependencies": {
