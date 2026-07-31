@@ -19,6 +19,11 @@
   let inventoryFilter = $state<InventoryFilter>("all");
   let inventorySort = $state<InventorySort>("newest");
   let filtersOpen = $state(false);
+  let canCreateProduct = $derived(
+    data.actor?.permissions.includes("*") ||
+      data.actor?.permissions.includes("products:create") ||
+      data.actor?.permissions.includes("warranties:write"),
+  );
 
   let filteredProducts = $derived(
     data.products
@@ -92,12 +97,14 @@
           Everything covered. <span class="text-muted">Nothing buried.</span>
         </h1>
       </div>
-      <a
-        href="/products/new"
-        class="hidden min-h-12 shrink-0 items-center justify-center gap-2 bg-ink px-5 text-sm font-bold text-white transition-colors hover:bg-orange lg:inline-flex"
-      >
-        <Plus size={18} /> Add product
-      </a>
+      {#if canCreateProduct}
+        <a
+          href="/products/new"
+          class="hidden min-h-12 shrink-0 items-center justify-center gap-2 bg-ink px-5 text-sm font-bold text-white transition-colors hover:bg-orange lg:inline-flex"
+        >
+          <Plus size={18} /> Add product
+        </a>
+      {/if}
     </div>
 
     <div class="mt-5 grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto]">
@@ -318,17 +325,22 @@
       >
         <div>
           <Plus size={32} class="mx-auto text-muted" strokeWidth={1.4} />
-          <h3 class="mt-4 text-xl font-bold">Add your first product</h3>
+          <h3 class="mt-4 text-xl font-bold">
+            {canCreateProduct ? "Add your first product" : "No products yet"}
+          </h3>
           <p class="mt-2 max-w-md text-sm leading-relaxed text-muted">
-            Record a purchase now so its coverage, manuals, notes, and claim
-            instructions are ready when you need them.
+            {canCreateProduct
+              ? "Record a purchase now so its coverage, manuals, notes, and claim instructions are ready when you need them."
+              : "A household contributor can add the first product when it is ready."}
           </p>
-          <a
-            href="/products/new"
-            class="mt-5 inline-flex min-h-11 items-center bg-ink px-4 text-sm font-bold text-white hover:bg-orange"
-          >
-            Add product
-          </a>
+          {#if canCreateProduct}
+            <a
+              href="/products/new"
+              class="mt-5 inline-flex min-h-11 items-center bg-ink px-4 text-sm font-bold text-white hover:bg-orange"
+            >
+              Add product
+            </a>
+          {/if}
         </div>
       </div>
     {:else}

@@ -169,9 +169,26 @@ domino claim create PRODUCT_ID --issue "Leaking from the lower seal" \
   --noticed-at 2026-07-28 --preferred-resolution repair
 domino note add PRODUCT_ID "Bosch requested a seal photo."
 domino document upload manual.pdf --product-id PRODUCT_ID --kind manual
+domino record validate --file examples/product-record.json
+domino --json record create --file examples/product-record.json
 ```
 
 `auth login` uses a browser-based device flow. The human sees the requested account and approves it; the CLI receives the credential only after approval.
+
+### Agent product records
+
+`record create` is the preferred intake path for Hermes and other agents. A JSON manifest can include product details, serials, warranties, notes, durable source identifiers, an image, and local or Paperless documents. Paths are resolved relative to the manifest. Use `--file -` to read JSON from standard input.
+
+Validate first when an agent should ask before acting:
+
+```sh
+domino --json record validate --file examples/product-record.json
+domino --json record create --file examples/product-record.json
+```
+
+The complete example is [examples/product-record.json](examples/product-record.json). `submissionId` is an optional caller-provided idempotency key. When it is omitted, the CLI derives a stable key from the manifest. Retrying the same submission does not create another product, document, or image.
+
+Domino blocks exact durable-identifier matches—serial number, external system and ID, or retailer/order/product—and returns likely name/model matches as warnings. An account with `products:manage` can deliberately resubmit with `allowDuplicateOf` set to the matched product ID. Metadata, warranties, notes, and source attribution are committed together; attachment results are reported separately under `components`, and any partial result exits nonzero so an interrupted upload can be retried safely.
 
 ### Hermes without credential access
 
@@ -212,11 +229,13 @@ Production device codes, service actors, roles, hashed credentials, and revocati
 
 ## Permission model
 
-Permissions are granular (`warranties:read`, `claims:create`, `claims:manage`, `documents:attach`, and so on). Roles are household-scoped. Human and service actors use the same policy system, credentials are separately revocable, and every mutation is designed to produce an audit event.
+Permissions are granular (`products:create`, `products:manage`, `warranties:create`, `claims:manage`, `documents:attach`, `images:attach`, and so on). Roles are household-scoped. Human and service actors use the same policy system, credentials are separately revocable, and every mutation is designed to produce an audit event.
 
-Built-in templates include Owner, Member, Agent Reader, and Claim Assistant. They are starting points rather than hard-coded roles.
+Built-in templates include Owner, Member, Agent Reader, Claim Assistant, Inventory Contributor, and Household Agent. Inventory Contributor is the safer intake default: it can add products and supporting records without editing existing products. Household Agent can manage inventory and claims but cannot administer people, service credentials, roles, integrations, or Paperless discovery.
 
 The device-approval screen lets the approving person choose each service permission. Owners can later edit a service account’s role or revoke it under **Settings → People & agents**. A grant cannot exceed the approving user’s own permissions.
+
+An administrator can also give any human or service account access to all household claims or only selected claims. Selected access is enforced on claim lists, individual claims, product claim summaries, claim notes, and claim-linked documents. A restricted account automatically receives access to a claim it creates, so an agent can continue the workflow it started.
 
 ## Health and API
 
@@ -227,4 +246,4 @@ The device-approval screen lets the approving person choose each service permiss
 
 ## Scope
 
-The household MVP intentionally leaves outbound notifications, bulk imports, multi-household UI, and autonomous form submission or phone calls for later. Claim instructions and evidence are structured now so an approved agent can safely help with those workflows in a future release.
+The household MVP intentionally leaves outbound notifications, multi-record bulk imports, multi-household UI, and autonomous form submission or phone calls for later. The single-record manifest gives delegated agents a safe intake path today. Claim instructions and evidence are structured now so an approved agent can safely help with those workflows in a future release.

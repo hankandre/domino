@@ -18,6 +18,78 @@ export const openApiDocument = {
         required: ["error"],
         properties: { error: { type: "string" }, code: { type: "string" } },
       },
+      ProductRecordInput: {
+        type: "object",
+        required: ["product"],
+        properties: {
+          product: {
+            type: "object",
+            required: ["name"],
+            properties: {
+              name: { type: "string", maxLength: 180 },
+              brand: { type: "string", maxLength: 100 },
+              model: { type: "string", maxLength: 120 },
+              category: { type: "string", maxLength: 120 },
+              retailer: { type: "string", maxLength: 120 },
+              orderNumber: { type: "string", maxLength: 180 },
+              productUrl: { type: ["string", "null"], format: "uri" },
+              purchaseDate: { type: ["string", "null"], format: "date" },
+              purchasePriceMinor: { type: "integer", minimum: 0 },
+              currency: { type: "string", minLength: 3, maxLength: 3 },
+              serialNumbers: {
+                type: "array",
+                maxItems: 20,
+                items: { type: "string", maxLength: 180 },
+              },
+            },
+          },
+          warranties: {
+            type: "array",
+            maxItems: 10,
+            items: {
+              type: "object",
+              properties: {
+                provider: { type: "string", maxLength: 180 },
+                kind: { type: "string", maxLength: 80 },
+                startsAt: { type: "string", format: "date" },
+                endsAt: { type: ["string", "null"], format: "date" },
+                lifetime: { type: "boolean" },
+                terms: { type: "string", maxLength: 20000 },
+                claimUrl: { type: ["string", "null"], format: "uri" },
+                claimPhone: { type: ["string", "null"] },
+                claimEmail: {
+                  type: ["string", "null"],
+                  format: "email",
+                },
+              },
+            },
+          },
+          notes: {
+            type: "array",
+            maxItems: 20,
+            items: { type: "string", maxLength: 10000 },
+          },
+          sources: {
+            type: "array",
+            maxItems: 20,
+            items: {
+              type: "object",
+              required: ["kind"],
+              properties: {
+                kind: {
+                  type: "string",
+                  enum: ["url", "external", "paperless"],
+                },
+                label: { type: "string", maxLength: 180 },
+                url: { type: "string", format: "uri" },
+                externalSystem: { type: "string", maxLength: 100 },
+                externalId: { type: "string", maxLength: 300 },
+              },
+            },
+          },
+          allowDuplicateOf: { type: "string", format: "uuid" },
+        },
+      },
     },
   },
   security: [{ bearerAuth: [] }, { browserSession: [] }],
@@ -30,6 +102,50 @@ export const openApiDocument = {
       post: {
         summary: "Create a product",
         responses: { "201": { description: "Created product" } },
+      },
+    },
+    "/v1/product-records/validate": {
+      post: {
+        summary: "Validate an agent product-record manifest",
+        description:
+          "Checks component permissions and exact/fuzzy household duplicates without creating data.",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/ProductRecordInput" },
+            },
+          },
+        },
+        responses: { "200": { description: "Validation result" } },
+      },
+    },
+    "/v1/product-records": {
+      post: {
+        summary: "Create a complete attributed product record",
+        description:
+          "Creates product metadata, warranties, notes, and sources atomically. Exact durable-identifier duplicates return 409.",
+        parameters: [
+          {
+            in: "header",
+            name: "Idempotency-Key",
+            required: true,
+            schema: { type: "string", minLength: 8, maxLength: 200 },
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/ProductRecordInput" },
+            },
+          },
+        },
+        responses: {
+          "201": { description: "Created product record" },
+          "200": { description: "Idempotent replay" },
+          "409": { description: "Duplicate product or conflicting key" },
+        },
       },
     },
     "/v1/products/{id}": {

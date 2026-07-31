@@ -2,6 +2,7 @@
   import {
     Archive,
     ArrowLeft,
+    Bot,
     ChevronRight,
     CircleAlert,
     ExternalLink,
@@ -52,7 +53,25 @@
         required: boolean;
       }>;
     }>;
+    createdBy?: { id: string; name: string } | null;
+    sources?: Array<{
+      id: string;
+      kind: string;
+      label: string | null;
+      url: string | null;
+      externalSystem: string | null;
+      externalId: string | null;
+      addedByName: string | null;
+    }>;
   };
+  const actorPermissions = untrack(() => data.actor?.permissions ?? []);
+  const can = (...permissions: string[]) =>
+    actorPermissions.includes("*") ||
+    permissions.some((permission) => actorPermissions.includes(permission));
+  const canManageProduct = can("products:manage", "warranties:write");
+  const canManageWarranty = can("warranties:manage", "warranties:write");
+  const canEditRecord =
+    canManageProduct && (!product.warranties?.length || canManageWarranty);
   let note = $state("");
   let uploading = $state(false);
   let documentKind = $state("manual");
@@ -288,19 +307,21 @@
           <ShieldCheck size={60} strokeWidth={1.2} />
         </div>
       {/if}
-      <label
-        class="absolute right-3 bottom-3 flex min-h-10 cursor-pointer items-center gap-2 bg-sheet px-3 text-xs font-bold shadow-sheet"
-      >
-        <ImagePlus size={16} />
-        {uploadingImage ? "Uploading…" : "Change image"}
-        <input
-          type="file"
-          class="sr-only"
-          accept="image/jpeg,image/png,image/webp,image/gif"
-          disabled={uploadingImage}
-          onchange={uploadImage}
-        />
-      </label>
+      {#if can("images:attach", "warranties:write")}
+        <label
+          class="absolute right-3 bottom-3 flex min-h-10 cursor-pointer items-center gap-2 bg-sheet px-3 text-xs font-bold shadow-sheet"
+        >
+          <ImagePlus size={16} />
+          {uploadingImage ? "Uploading…" : "Change image"}
+          <input
+            type="file"
+            class="sr-only"
+            accept="image/jpeg,image/png,image/webp,image/gif"
+            disabled={uploadingImage}
+            onchange={uploadImage}
+          />
+        </label>
+      {/if}
     </div>
 
     <div class="flex flex-col">
@@ -353,16 +374,18 @@
             {data.product.model} · {data.product.category}
           </p>
         </div>
-        <button
-          aria-label={product.archivedAt
-            ? "Restore product"
-            : "Archive product"}
-          title={product.archivedAt ? "Restore product" : "Archive product"}
-          class="grid size-11 shrink-0 place-items-center border border-rule bg-sheet text-muted hover:border-ink hover:text-ink"
-          onclick={toggleArchived}
-        >
-          <Archive size={19} />
-        </button>
+        {#if canManageProduct}
+          <button
+            aria-label={product.archivedAt
+              ? "Restore product"
+              : "Archive product"}
+            title={product.archivedAt ? "Restore product" : "Archive product"}
+            class="grid size-11 shrink-0 place-items-center border border-rule bg-sheet text-muted hover:border-ink hover:text-ink"
+            onclick={toggleArchived}
+          >
+            <Archive size={19} />
+          </button>
+        {/if}
       </div>
 
       <dl class="mt-7 grid grid-cols-2 border-y border-rule sm:grid-cols-4">
@@ -419,22 +442,83 @@
       </dl>
 
       <div class="mt-auto flex flex-wrap gap-2 pt-6">
-        <a
-          href={`/claims/new?product=${data.product.id}`}
-          class="inline-flex min-h-12 items-center gap-2 bg-ink px-5 text-sm font-bold text-white hover:bg-orange"
-        >
-          <Plus size={17} /> Start a claim
-        </a>
-        <button
-          class="inline-flex min-h-12 items-center gap-2 border border-rule bg-sheet px-5 text-sm font-bold hover:border-ink"
-          aria-expanded={editing}
-          onclick={() => (editing = !editing)}
-        >
-          {editing ? "Close editor" : "Edit record"}
-        </button>
+        {#if can("claims:create")}
+          <a
+            href={`/claims/new?product=${data.product.id}`}
+            class="inline-flex min-h-12 items-center gap-2 bg-ink px-5 text-sm font-bold text-white hover:bg-orange"
+          >
+            <Plus size={17} /> Start a claim
+          </a>
+        {/if}
+        {#if canEditRecord}
+          <button
+            class="inline-flex min-h-12 items-center gap-2 border border-rule bg-sheet px-5 text-sm font-bold hover:border-ink"
+            aria-expanded={editing}
+            onclick={() => (editing = !editing)}
+          >
+            {editing ? "Close editor" : "Edit record"}
+          </button>
+        {/if}
       </div>
     </div>
   </header>
+
+  {#if product.createdBy || product.sources?.length}
+    <section
+      aria-labelledby="record-origin-heading"
+      class="mt-5 grid gap-4 border-y border-rule bg-sheet px-4 py-4 sm:grid-cols-[minmax(180px,0.35fr)_1fr] sm:px-5"
+    >
+      <div>
+        <p
+          id="record-origin-heading"
+          class="text-xs font-bold tracking-[0.055em] text-muted uppercase"
+        >
+          Record origin
+        </p>
+        <div class="mt-2 flex items-center gap-2 text-sm font-bold">
+          <Bot size={17} class="text-orange" />
+          Added by {product.createdBy?.name ?? "Household"}
+        </div>
+      </div>
+      {#if product.sources?.length}
+        <div
+          class="min-w-0 border-t border-rule pt-3 sm:border-t-0 sm:border-l sm:pt-0 sm:pl-5"
+        >
+          <p class="text-xs font-bold text-muted">Sources retained</p>
+          <ul class="mt-2 flex flex-wrap gap-2">
+            {#each product.sources as source}
+              <li>
+                {#if source.url}
+                  <a
+                    href={source.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    class="inline-flex min-h-9 max-w-full items-center gap-2 border border-rule bg-paper px-3 text-xs font-bold hover:border-ink"
+                  >
+                    <span class="truncate"
+                      >{source.label ??
+                        source.externalSystem ??
+                        "Source link"}</span
+                    >
+                    <ExternalLink size={13} class="shrink-0" />
+                  </a>
+                {:else}
+                  <span
+                    class="inline-flex min-h-9 max-w-full items-center border border-rule bg-paper px-3 text-xs font-bold"
+                  >
+                    <span class="truncate"
+                      >{source.label ??
+                        `${source.externalSystem ?? source.kind}: ${source.externalId ?? "reference"}`}</span
+                    >
+                  </span>
+                {/if}
+              </li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
+    </section>
+  {/if}
 
   {#if editError}
     <div
@@ -721,35 +805,37 @@
               Manuals, receipts, warranty terms, and claim evidence.
             </p>
           </div>
-          <div class="flex w-full flex-wrap items-center gap-2 sm:w-auto">
-            <label class="sr-only" for="product-document-kind"
-              >Document type</label
-            >
-            <select
-              id="product-document-kind"
-              bind:value={documentKind}
-              class="min-h-10 border border-rule bg-sheet px-2 text-xs font-bold"
-            >
-              <option value="manual">Manual</option>
-              <option value="receipt">Receipt</option>
-              <option value="warranty">Warranty terms</option>
-              <option value="photo">Photo</option>
-              <option value="other">Other</option>
-            </select>
-            <label
-              class="inline-flex min-h-10 cursor-pointer items-center gap-2 border border-rule bg-sheet px-3 text-xs font-bold hover:border-ink"
-            >
-              <FilePlus2 size={16} />
-              {uploading ? "Uploading…" : "Attach"}
-              <input
-                type="file"
-                class="sr-only"
-                accept="image/*,.pdf"
-                disabled={uploading}
-                onchange={uploadDocument}
-              />
-            </label>
-          </div>
+          {#if can("documents:attach")}
+            <div class="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+              <label class="sr-only" for="product-document-kind"
+                >Document type</label
+              >
+              <select
+                id="product-document-kind"
+                bind:value={documentKind}
+                class="min-h-10 border border-rule bg-sheet px-2 text-xs font-bold"
+              >
+                <option value="manual">Manual</option>
+                <option value="receipt">Receipt</option>
+                <option value="warranty">Warranty terms</option>
+                <option value="photo">Photo</option>
+                <option value="other">Other</option>
+              </select>
+              <label
+                class="inline-flex min-h-10 cursor-pointer items-center gap-2 border border-rule bg-sheet px-3 text-xs font-bold hover:border-ink"
+              >
+                <FilePlus2 size={16} />
+                {uploading ? "Uploading…" : "Attach"}
+                <input
+                  type="file"
+                  class="sr-only"
+                  accept="image/*,.pdf"
+                  disabled={uploading}
+                  onchange={uploadDocument}
+                />
+              </label>
+            </div>
+          {/if}
         </div>
 
         <div class="border-t border-ink">
@@ -807,28 +893,30 @@
             Shared context for the household and approved agents.
           </p>
         </div>
-        <div class="border border-rule bg-sheet p-4">
-          <label
-            for="new-note"
-            class="text-xs font-bold tracking-[0.055em] text-muted uppercase"
-            >Add a note</label
-          >
-          <textarea
-            id="new-note"
-            bind:value={note}
-            class="mt-2 min-h-24 w-full resize-y border-0 bg-paper p-3 text-sm leading-relaxed outline-none"
-            placeholder="Record a symptom, phone call, repair attempt, or decision…"
-          ></textarea>
-          <div class="mt-3 flex justify-end">
-            <button
-              class="min-h-10 bg-ink px-4 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-45"
-              disabled={!note.trim()}
-              onclick={addNote}
+        {#if can("notes:write")}
+          <div class="border border-rule bg-sheet p-4">
+            <label
+              for="new-note"
+              class="text-xs font-bold tracking-[0.055em] text-muted uppercase"
+              >Add a note</label
             >
-              Save note
-            </button>
+            <textarea
+              id="new-note"
+              bind:value={note}
+              class="mt-2 min-h-24 w-full resize-y border-0 bg-paper p-3 text-sm leading-relaxed outline-none"
+              placeholder="Record a symptom, phone call, repair attempt, or decision…"
+            ></textarea>
+            <div class="mt-3 flex justify-end">
+              <button
+                class="min-h-10 bg-ink px-4 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-45"
+                disabled={!note.trim()}
+                onclick={addNote}
+              >
+                Save note
+              </button>
+            </div>
           </div>
-        </div>
+        {/if}
 
         <div class="mt-3 border-t border-rule">
           {#each notes as item}

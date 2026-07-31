@@ -27,6 +27,10 @@ export const load: PageServerLoad = async ({ locals }) => {
                 ]
               : [],
           )
-        : await listClaims(requireDb(), locals.actor!.householdId),
+        : await listClaims(
+            requireDb(),
+            locals.actor!.householdId,
+            locals.actor!.claimIds,
+          ),
   };
 };

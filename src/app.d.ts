@@ -6,6 +6,8 @@ declare global {
         householdId: string;
         kind: "user" | "service";
         permissions: string[];
+        claimAccessScope: "all" | "selected";
+        claimIds?: string[];
         user?: {
           id: string;
           email: string;

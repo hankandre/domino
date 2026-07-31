@@ -17,4 +17,22 @@ describe("permission templates", () => {
     expect(can(assistant, "paperless:discover")).toBe(false);
     expect(can(assistant, "service_accounts:manage")).toBe(false);
   });
+
+  it("lets an inventory contributor add records without changing existing ones", () => {
+    const contributor = roleTemplates["inventory-contributor"].permissions;
+    expect(can(contributor, "products:create")).toBe(true);
+    expect(can(contributor, "warranties:create")).toBe(true);
+    expect(can(contributor, "images:attach")).toBe(true);
+    expect(can(contributor, "products:manage")).toBe(false);
+    expect(can(contributor, "documents:manage")).toBe(false);
+  });
+
+  it("keeps the household agent outside security and integration administration", () => {
+    const agent = roleTemplates["household-agent"].permissions;
+    expect(can(agent, "products:manage")).toBe(true);
+    expect(can(agent, "claims:manage")).toBe(true);
+    expect(can(agent, "household:manage")).toBe(false);
+    expect(can(agent, "service_accounts:manage")).toBe(false);
+    expect(can(agent, "paperless:discover")).toBe(false);
+  });
 });

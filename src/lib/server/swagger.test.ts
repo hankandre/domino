@@ -31,6 +31,12 @@ describe("Swagger documentation", () => {
     expect(script.headers.get("content-type")).toContain("text/javascript");
     expect((await script.text()).length).toBeGreaterThan(100_000);
     expect(specification.status).toBe(200);
-    expect((await specification.json()).openapi).toBe("3.1.0");
+    const document = (await specification.json()) as {
+      openapi: string;
+      paths: Record<string, unknown>;
+    };
+    expect(document.openapi).toBe("3.1.0");
+    expect(document.paths).toHaveProperty("/v1/product-records");
+    expect(document.paths).toHaveProperty("/v1/product-records/validate");
   });
 });

@@ -107,33 +107,35 @@
     title="Documents"
     description="Manuals, receipts, photos, and terms stay attached to the product that needs them."
   >
-    <div class="flex items-center gap-2">
-      <label class="sr-only" for="document-kind">Document type</label>
-      <select
-        id="document-kind"
-        bind:value={documentKind}
-        class="min-h-11 border border-rule bg-sheet px-3 text-sm font-bold"
-      >
-        <option value="manual">Manual</option>
-        <option value="receipt">Receipt</option>
-        <option value="warranty">Warranty terms</option>
-        <option value="photo">Photo</option>
-        <option value="other">Other</option>
-      </select>
-      <label
-        class="inline-flex min-h-11 cursor-pointer items-center gap-2 bg-ink px-4 text-sm font-bold text-white"
-      >
-        <FilePlus2 size={17} />
-        {uploading ? "Uploading…" : "Attach file"}
-        <input
-          type="file"
-          class="sr-only"
-          accept="image/*,.pdf"
-          disabled={uploading}
-          onchange={upload}
-        />
-      </label>
-    </div>
+    {#if data.canAttachDocuments}
+      <div class="flex items-center gap-2">
+        <label class="sr-only" for="document-kind">Document type</label>
+        <select
+          id="document-kind"
+          bind:value={documentKind}
+          class="min-h-11 border border-rule bg-sheet px-3 text-sm font-bold"
+        >
+          <option value="manual">Manual</option>
+          <option value="receipt">Receipt</option>
+          <option value="warranty">Warranty terms</option>
+          <option value="photo">Photo</option>
+          <option value="other">Other</option>
+        </select>
+        <label
+          class="inline-flex min-h-11 cursor-pointer items-center gap-2 bg-ink px-4 text-sm font-bold text-white"
+        >
+          <FilePlus2 size={17} />
+          {uploading ? "Uploading…" : "Attach file"}
+          <input
+            type="file"
+            class="sr-only"
+            accept="image/*,.pdf"
+            disabled={uploading}
+            onchange={upload}
+          />
+        </label>
+      </div>
+    {/if}
   </PageHeader>
   {#if errorMessage}<div
       role="alert"
@@ -147,7 +149,9 @@
     >
       {message}
     </div>{/if}
-  {#if data.defaultDocumentBackend === "paperless"}
+  {#if data.defaultDocumentBackend === "paperless" &&
+  data.canAttachDocuments &&
+  data.canDiscoverPaperless}
     <details class="mt-6 border border-rule bg-sheet p-4">
       <summary class="cursor-pointer text-sm font-bold"
         >Link an existing Paperless-ngx document</summary
@@ -229,13 +233,15 @@
               >{document.processingStatus}</span
             >
           {/if}
-          <button
-            onclick={() => trashDocument(document.id, document.name)}
-            class="grid size-10 place-items-center text-muted hover:bg-red-soft hover:text-red"
-            aria-label={`Remove ${document.name}`}
-          >
-            <Trash2 size={16} />
-          </button>
+          {#if data.canManageDocuments}
+            <button
+              onclick={() => trashDocument(document.id, document.name)}
+              class="grid size-10 place-items-center text-muted hover:bg-red-soft hover:text-red"
+              aria-label={`Remove ${document.name}`}
+            >
+              <Trash2 size={16} />
+            </button>
+          {/if}
         </div>
       {/each}
     </div>

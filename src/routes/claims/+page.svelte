@@ -30,12 +30,15 @@
     title="Claims"
     description="Keep every contact, document, deadline, and decision in one durable trail."
   >
-    <a
-      href="/claims/new"
-      class="inline-flex min-h-11 items-center gap-2 bg-ink px-4 text-sm font-bold text-white hover:bg-orange"
-    >
-      <Plus size={17} /> New claim
-    </a>
+    {#if data.actor?.permissions.includes("*") ||
+    data.actor?.permissions.includes("claims:create")}
+      <a
+        href="/claims/new"
+        class="inline-flex min-h-11 items-center gap-2 bg-ink px-4 text-sm font-bold text-white hover:bg-orange"
+      >
+        <Plus size={17} /> New claim
+      </a>
+    {/if}
   </PageHeader>
 
   <section class="mt-7" aria-labelledby="open-claims-heading">

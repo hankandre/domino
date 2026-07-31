@@ -49,6 +49,7 @@ export const load: PageServerLoad = async ({ locals, params }) => {
     locals.actor!.householdId,
     params.id,
     { documents: access.documents, notes: access.notes },
+    locals.actor!.claimIds,
   );
   if (!claim) throw error(404, "Claim not found");
   return { claim };

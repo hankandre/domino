@@ -3,7 +3,7 @@ import { createReadStream } from "node:fs";
 import { mkdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { Readable } from "node:stream";
-import { and, eq, isNull, lt } from "drizzle-orm";
+import { and, eq, inArray, isNull, lt, or } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import * as schema from "../db/schema";
 import { paperlessClientForHousehold } from "../integrations/paperless";
@@ -57,17 +57,24 @@ export async function listDocuments(
   db: Database,
   householdId: string,
   includeTrash = false,
+  claimIds?: string[],
 ) {
   const rows = await db
     .select()
     .from(schema.documents)
     .where(
-      includeTrash
-        ? eq(schema.documents.householdId, householdId)
-        : and(
-            eq(schema.documents.householdId, householdId),
-            isNull(schema.documents.trashedAt),
-          ),
+      and(
+        eq(schema.documents.householdId, householdId),
+        includeTrash ? undefined : isNull(schema.documents.trashedAt),
+        claimIds === undefined
+          ? undefined
+          : claimIds.length
+            ? or(
+                isNull(schema.documents.claimId),
+                inArray(schema.documents.claimId, claimIds),
+              )
+            : isNull(schema.documents.claimId),
+      ),
     )
     .orderBy(schema.documents.createdAt);
   return rows;
@@ -107,6 +114,25 @@ export async function attachDocument(
   const bytes = Buffer.from(await input.file.arrayBuffer());
   const sha256 = createHash("sha256").update(bytes).digest("hex");
   const name = (input.name || input.file.name || "attachment").slice(0, 255);
+  const [existing] = await db
+    .select()
+    .from(schema.documents)
+    .where(
+      and(
+        eq(schema.documents.householdId, householdId),
+        input.productId
+          ? eq(schema.documents.productId, input.productId)
+          : isNull(schema.documents.productId),
+        input.claimId
+          ? eq(schema.documents.claimId, input.claimId)
+          : isNull(schema.documents.claimId),
+        eq(schema.documents.kind, input.kind),
+        eq(schema.documents.sha256, sha256),
+        isNull(schema.documents.trashedAt),
+      ),
+    )
+    .limit(1);
+  if (existing) return existing;
 
   if (backend === "paperless") {
     const client = await paperlessClientForHousehold(db, householdId);
@@ -241,6 +267,25 @@ export async function linkPaperlessDocument(
       "Paperless-ngx is not this household’s authoritative document backend.",
     );
   }
+  const [existing] = await db
+    .select()
+    .from(schema.documents)
+    .where(
+      and(
+        eq(schema.documents.householdId, householdId),
+        input.productId
+          ? eq(schema.documents.productId, input.productId)
+          : isNull(schema.documents.productId),
+        input.claimId
+          ? eq(schema.documents.claimId, input.claimId)
+          : isNull(schema.documents.claimId),
+        eq(schema.documents.kind, input.kind),
+        eq(schema.documents.paperlessDocumentId, input.paperlessDocumentId),
+        isNull(schema.documents.trashedAt),
+      ),
+    )
+    .limit(1);
+  if (existing) return existing;
   const client = await paperlessClientForHousehold(db, householdId);
   if (!client) throw new Error("Paperless-ngx is not configured.");
   const source = await client.getDocument(input.paperlessDocumentId);

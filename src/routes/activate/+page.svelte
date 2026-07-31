@@ -8,21 +8,33 @@
   );
   let message = $state("");
   const grants = [
-    ["warranties:read", "Read products and warranties"],
+    ["products:read", "View products"],
+    ["products:create", "Add products"],
+    ["products:manage", "Edit and archive products"],
+    ["warranties:read", "View warranties"],
+    ["warranties:create", "Add warranties"],
+    ["warranties:manage", "Edit warranties"],
     ["claims:read", "Read claims"],
     ["claims:create", "Create claim drafts"],
     ["claims:manage", "Manage claim status"],
     ["documents:read", "Read documents"],
     ["documents:attach", "Attach documents"],
+    ["documents:manage", "Remove and restore documents"],
+    ["images:attach", "Attach product images"],
     ["paperless:discover", "Search and link Paperless documents"],
     ["notes:read", "Read notes"],
     ["notes:write", "Add notes"],
   ];
   let selected = $state([
+    "products:read",
+    "products:create",
     "warranties:read",
+    "warranties:create",
     "claims:read",
     "claims:create",
     "documents:read",
+    "documents:attach",
+    "images:attach",
     "notes:read",
     "notes:write",
   ]);
@@ -62,7 +74,7 @@
     </h1>
     <p class="mt-3 text-sm leading-relaxed text-muted">
       Only approve a code shown by a Domino CLI you started. Permissions remain
-      controlled by the service account.
+      controlled by the service account and can be changed later in Access.
     </p>
 
     {#if approvalState === "approved"}
@@ -98,6 +110,10 @@
             class="pt-4 text-xs font-bold tracking-[0.055em] text-muted uppercase"
             >Grant permissions</legend
           >
+          <p class="mt-2 text-xs leading-relaxed text-muted">
+            The suggested permissions let an agent add inventory and supporting
+            records without editing or deleting existing ones.
+          </p>
           <div class="mt-2 grid sm:grid-cols-2">
             {#each grants as grant}
               <label

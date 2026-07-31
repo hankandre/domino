@@ -38,6 +38,9 @@
   const warranty = untrack(() => data.claim.warranty);
   const events = untrack(() => data.claim.events ?? []);
   const documents = untrack(() => data.claim.documents ?? []);
+  const actorPermissions = untrack(() => data.actor?.permissions ?? []);
+  const can = (permission: string) =>
+    actorPermissions.includes("*") || actorPermissions.includes(permission);
 
   function statusTone(value: string) {
     if (value === "needs_evidence" || value === "denied") return "danger";
@@ -329,19 +332,21 @@
               Files attached here remain associated with this claim.
             </p>
           </div>
-          <label
-            class="inline-flex min-h-10 cursor-pointer items-center gap-2 border border-rule bg-sheet px-3 text-xs font-bold hover:border-ink"
-          >
-            <FilePlus2 size={15} />
-            {uploading ? "Uploading…" : "Attach evidence"}
-            <input
-              type="file"
-              class="sr-only"
-              accept="image/*,.pdf"
-              disabled={uploading}
-              onchange={uploadEvidence}
-            />
-          </label>
+          {#if can("documents:attach")}
+            <label
+              class="inline-flex min-h-10 cursor-pointer items-center gap-2 border border-rule bg-sheet px-3 text-xs font-bold hover:border-ink"
+            >
+              <FilePlus2 size={15} />
+              {uploading ? "Uploading…" : "Attach evidence"}
+              <input
+                type="file"
+                class="sr-only"
+                accept="image/*,.pdf"
+                disabled={uploading}
+                onchange={uploadEvidence}
+              />
+            </label>
+          {/if}
         </div>
         {#if documents.length}
           <div class="mt-4 border-t border-ink">
@@ -381,24 +386,28 @@
 
       <section aria-labelledby="notes-heading">
         <h2 id="notes-heading" class="text-xl font-bold">Claim notes</h2>
-        <div class="mt-4 border border-rule bg-sheet p-4">
-          <label for="claim-note" class="text-xs font-bold text-muted uppercase"
-            >Add a durable note</label
-          >
-          <textarea
-            id="claim-note"
-            bind:value={note}
-            class="mt-2 min-h-24 w-full bg-paper p-3 text-sm"
-            placeholder="Record a call, request, deadline, or decision…"
-          ></textarea>
-          <button
-            onclick={addNote}
-            disabled={!note.trim()}
-            class="mt-2 flex min-h-10 items-center justify-center gap-2 bg-ink px-4 text-xs font-bold text-white disabled:opacity-40"
-          >
-            <MessageSquareText size={15} /> Add note
-          </button>
-        </div>
+        {#if can("notes:write")}
+          <div class="mt-4 border border-rule bg-sheet p-4">
+            <label
+              for="claim-note"
+              class="text-xs font-bold text-muted uppercase"
+              >Add a durable note</label
+            >
+            <textarea
+              id="claim-note"
+              bind:value={note}
+              class="mt-2 min-h-24 w-full bg-paper p-3 text-sm"
+              placeholder="Record a call, request, deadline, or decision…"
+            ></textarea>
+            <button
+              onclick={addNote}
+              disabled={!note.trim()}
+              class="mt-2 flex min-h-10 items-center justify-center gap-2 bg-ink px-4 text-xs font-bold text-white disabled:opacity-40"
+            >
+              <MessageSquareText size={15} /> Add note
+            </button>
+          </div>
+        {/if}
         {#if notes.length}
           <div class="mt-3 border-t border-rule">
             {#each notes as item}
@@ -420,7 +429,8 @@
     </div>
 
     <aside class="space-y-5">
-      <section class="border border-ink bg-sheet p-5">
+      {#if can("claims:manage")}
+        <section class="border border-ink bg-sheet p-5">
         <h2 class="text-lg font-bold tracking-[-0.02em]">Manage claim</h2>
         <label class="mt-4 block text-xs font-bold text-muted uppercase">
           Status
@@ -465,7 +475,8 @@
             />{/if}
           Apply status
         </button>
-      </section>
+        </section>
+      {/if}
 
       <section class="border border-rule bg-sheet p-5">
         <h2 class="text-lg font-bold">Provider contact</h2>

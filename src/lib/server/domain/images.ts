@@ -1,9 +1,9 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { mkdir, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { Readable } from "node:stream";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import * as schema from "../db/schema";
 import { downloadProductImage } from "../image-suggestions";
@@ -59,6 +59,26 @@ async function saveImage(
       "Product images must be a supported image no larger than 10 MiB.",
     );
   }
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const [existing] = await db
+    .select()
+    .from(schema.productImages)
+    .where(
+      and(
+        eq(schema.productImages.productId, productId),
+        sourceUrl
+          ? eq(schema.productImages.sourceUrl, sourceUrl)
+          : eq(schema.productImages.sha256, sha256),
+      ),
+    )
+    .limit(1);
+  if (existing) {
+    await db
+      .update(schema.productImages)
+      .set({ primary: sql`(${schema.productImages.id} = ${existing.id})` })
+      .where(eq(schema.productImages.productId, productId));
+    return existing;
+  }
   const extension =
     {
       "image/jpeg": "jpg",
@@ -83,6 +103,7 @@ async function saveImage(
           productId,
           sourceUrl,
           storageKey: key,
+          sha256,
           altText: "Product image",
           primary: true,
           confirmedByActorId: actorId,

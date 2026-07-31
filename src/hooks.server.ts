@@ -20,6 +20,7 @@ export const handle: Handle = async ({ event, resolve }) => {
       householdId: "demo-household",
       kind: "user",
       permissions: ["*"],
+      claimAccessScope: "all",
       user: {
         id: "demo-user",
         email: "owner@demo.local",

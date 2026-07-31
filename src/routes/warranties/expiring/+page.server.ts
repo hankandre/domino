@@ -2,13 +2,13 @@ import type { PageServerLoad } from "./$types";
 import { demoProducts } from "$lib/demo";
 import {
   relatedReadAccess,
-  requirePagePermission,
+  requireAnyPagePermission,
 } from "$lib/server/auth/authorization";
 import { requireDb } from "$lib/server/db";
 import { listProductSummaries } from "$lib/server/domain/products";
 
 export const load: PageServerLoad = async ({ locals }) => {
-  requirePagePermission(locals.actor, "warranties:read");
+  requireAnyPagePermission(locals.actor, ["products:read", "warranties:read"]);
   return {
     products: (process.env.DOMINO_DEMO_MODE === "true"
       ? demoProducts

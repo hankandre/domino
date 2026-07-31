@@ -11,10 +11,11 @@ export function hasPermission(
 }
 
 export function relatedReadAccess(
-  actor: { permissions: string[] } | null | undefined,
+  actor: { permissions: string[]; claimIds?: string[] } | null | undefined,
 ) {
   return {
     claims: hasPermission(actor, "claims:read"),
+    claimIds: actor?.claimIds,
     documents: hasPermission(actor, "documents:read"),
     notes: hasPermission(actor, "notes:read"),
   };

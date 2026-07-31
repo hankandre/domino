@@ -138,6 +138,10 @@ export const actors = pgTable("actors", {
   kind: actorKind("kind").notNull(),
   userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
+  claimAccessScope: text("claim_access_scope")
+    .$type<"all" | "selected">()
+    .notNull()
+    .default("all"),
   disabled: boolean("disabled").notNull().default(false),
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
   ...timestamps,
@@ -280,12 +284,48 @@ export const products = pgTable(
     purchaseDate: date("purchase_date"),
     purchasePriceMinor: integer("purchase_price_minor"),
     currency: text("currency").notNull().default("USD"),
+    createdByActorId: uuid("created_by_actor_id").references(() => actors.id, {
+      onDelete: "set null",
+    }),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     ...timestamps,
   },
   (table) => [
     index("products_household_idx").on(table.householdId),
     index("products_household_name_idx").on(table.householdId, table.name),
+  ],
+);
+
+export const productSources = pgTable(
+  "product_sources",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    householdId: uuid("household_id")
+      .notNull()
+      .references(() => households.id, { onDelete: "cascade" }),
+    productId: uuid("product_id")
+      .notNull()
+      .references(() => products.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    label: text("label"),
+    url: text("url"),
+    externalSystem: text("external_system"),
+    externalId: text("external_id"),
+    addedByActorId: uuid("added_by_actor_id").references(() => actors.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("product_sources_product_idx").on(table.productId),
+    index("product_sources_household_idx").on(table.householdId),
+    index("product_sources_household_external_idx")
+      .on(table.householdId, table.externalSystem, table.externalId)
+      .where(
+        sql`${table.externalSystem} is not null and ${table.externalId} is not null`,
+      ),
   ],
 );
 
@@ -339,6 +379,7 @@ export const productImages = pgTable("product_images", {
     .references(() => products.id, { onDelete: "cascade" }),
   sourceUrl: text("source_url"),
   storageKey: text("storage_key"),
+  sha256: text("sha256"),
   altText: text("alt_text"),
   primary: boolean("primary").notNull().default(false),
   confirmedByActorId: uuid("confirmed_by_actor_id").references(
@@ -405,6 +446,28 @@ export const claims = pgTable(
       table.reference,
     ),
     index("claims_product_idx").on(table.productId),
+  ],
+);
+
+export const actorClaimAccess = pgTable(
+  "actor_claim_access",
+  {
+    actorId: uuid("actor_id")
+      .notNull()
+      .references(() => actors.id, { onDelete: "cascade" }),
+    claimId: uuid("claim_id")
+      .notNull()
+      .references(() => claims.id, { onDelete: "cascade" }),
+    grantedByActorId: uuid("granted_by_actor_id").references(() => actors.id, {
+      onDelete: "set null",
+    }),
+    grantedAt: timestamp("granted_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.actorId, table.claimId] }),
+    index("actor_claim_access_claim_idx").on(table.claimId),
   ],
 );
 
@@ -523,6 +586,38 @@ export const auditEvents = pgTable(
   },
   (table) => [
     index("audit_events_household_idx").on(table.householdId, table.createdAt),
+  ],
+);
+
+export const idempotencyKeys = pgTable(
+  "idempotency_keys",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    householdId: uuid("household_id")
+      .notNull()
+      .references(() => households.id, { onDelete: "cascade" }),
+    actorId: uuid("actor_id")
+      .notNull()
+      .references(() => actors.id, { onDelete: "cascade" }),
+    scope: text("scope").notNull(),
+    keyHash: text("key_hash").notNull(),
+    requestHash: text("request_hash").notNull(),
+    statusCode: integer("status_code").notNull(),
+    response: jsonb("response").$type<Record<string, unknown>>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("idempotency_keys_actor_scope_key_unique").on(
+      table.actorId,
+      table.scope,
+      table.keyHash,
+    ),
+    index("idempotency_keys_household_idx").on(
+      table.householdId,
+      table.createdAt,
+    ),
   ],
 );
 

@@ -3,16 +3,34 @@ import type { PageServerLoad } from "./$types";
 import { demoProducts } from "$lib/demo";
 import {
   relatedReadAccess,
-  requirePagePermission,
+  requireAnyPagePermission,
 } from "$lib/server/auth/authorization";
 import { requireDb } from "$lib/server/db";
 import { getProductDetail } from "$lib/server/domain/products";
 
 export const load: PageServerLoad = async ({ locals, params }) => {
-  requirePagePermission(locals.actor, "warranties:read");
+  requireAnyPagePermission(locals.actor, ["products:read", "warranties:read"]);
   const product =
     process.env.DOMINO_DEMO_MODE === "true"
-      ? demoProducts.find((item) => item.id === params.id)
+      ? (() => {
+          const item = demoProducts.find((product) => product.id === params.id);
+          return item
+            ? {
+                ...item,
+                createdBy: { id: "demo-hermes", name: "Hermes" },
+                sources: [
+                  {
+                    id: "demo-source",
+                    kind: "external",
+                    label: "Household intake",
+                    url: null,
+                    externalSystem: "hermes",
+                    externalId: `demo-${item.id}`,
+                  },
+                ],
+              }
+            : undefined;
+        })()
       : await getProductDetail(
           requireDb(),
           locals.actor!.householdId,

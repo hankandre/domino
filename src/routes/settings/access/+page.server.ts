@@ -1,6 +1,6 @@
 import { fail } from "@sveltejs/kit";
 import type { Actions, PageServerLoad } from "./$types";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { createInvitation, createPasswordReset } from "$lib/server/auth/local";
 import {
   canAdministerPermissions,
@@ -9,10 +9,12 @@ import {
 } from "$lib/server/auth/authorization";
 import { requireDb } from "$lib/server/db";
 import {
+  actorClaimAccess,
   actorRoles,
   actors,
   apiCredentials,
   auditEvents,
+  claims,
   roles,
   users,
   webSessions,
@@ -71,8 +73,11 @@ export const load: PageServerLoad = async ({ locals }) => {
           roleId: "demo-owner-role",
           roleName: "Owner",
           permissions: ["*"],
+          claimAccessScope: "all",
+          selectedClaimIds: [],
           canReset: true,
           canToggle: false,
+          canEditClaimAccess: true,
           canEditPermissions: false,
         },
         {
@@ -85,47 +90,96 @@ export const load: PageServerLoad = async ({ locals }) => {
           roleId: "demo-agent-role",
           roleName: "Claim assistant",
           permissions: ["warranties:read", "claims:read"],
+          claimAccessScope: "selected",
+          selectedClaimIds: ["demo-claim-1"],
           canReset: false,
           canToggle: true,
+          canEditClaimAccess: true,
           canEditPermissions: true,
         },
       ],
       roles: [{ id: "demo-member", name: "Member" }],
+      claims: [
+        {
+          id: "demo-claim-1",
+          reference: "CLM-2026-A1B2C3D4",
+          issue: "Dishwasher leaking",
+        },
+      ],
       grantablePermissions: [...permissions],
       canManage: true,
     };
   }
   const actor = locals.actor!;
   const database = requireDb();
-  const [accounts, householdRoles] = await Promise.all([
-    database
-      .select({
-        id: actors.id,
-        userId: actors.userId,
-        kind: actors.kind,
-        name: actors.name,
-        email: users.email,
-        disabled: actors.disabled,
-        roleId: roles.id,
-        roleName: roles.name,
-        permissions: roles.permissions,
-        roleSystem: roles.system,
-      })
-      .from(actors)
-      .leftJoin(users, eq(actors.userId, users.id))
-      .leftJoin(actorRoles, eq(actorRoles.actorId, actors.id))
-      .leftJoin(roles, eq(actorRoles.roleId, roles.id))
-      .where(eq(actors.householdId, actor.householdId)),
-    database
-      .select({
-        id: roles.id,
-        name: roles.name,
-        description: roles.description,
-        permissions: roles.permissions,
-      })
-      .from(roles)
-      .where(eq(roles.householdId, actor.householdId)),
-  ]);
+  const [accounts, householdRoles, householdClaims, claimGrants] =
+    await Promise.all([
+      database
+        .select({
+          id: actors.id,
+          userId: actors.userId,
+          kind: actors.kind,
+          name: actors.name,
+          email: users.email,
+          disabled: actors.disabled,
+          roleId: roles.id,
+          roleName: roles.name,
+          permissions: roles.permissions,
+          roleSystem: roles.system,
+          claimAccessScope: actors.claimAccessScope,
+        })
+        .from(actors)
+        .leftJoin(users, eq(actors.userId, users.id))
+        .leftJoin(actorRoles, eq(actorRoles.actorId, actors.id))
+        .leftJoin(roles, eq(actorRoles.roleId, roles.id))
+        .where(eq(actors.householdId, actor.householdId)),
+      database
+        .select({
+          id: roles.id,
+          name: roles.name,
+          description: roles.description,
+          permissions: roles.permissions,
+        })
+        .from(roles)
+        .where(eq(roles.householdId, actor.householdId)),
+      database
+        .select({
+          id: claims.id,
+          reference: claims.reference,
+          issue: claims.issue,
+        })
+        .from(claims)
+        .where(
+          and(
+            eq(claims.householdId, actor.householdId),
+            actor.claimIds === undefined
+              ? undefined
+              : actor.claimIds.length
+                ? inArray(claims.id, actor.claimIds)
+                : sql`false`,
+          ),
+        ),
+      database
+        .select({
+          actorId: actorClaimAccess.actorId,
+          claimId: actorClaimAccess.claimId,
+        })
+        .from(actorClaimAccess)
+        .innerJoin(
+          actors,
+          and(
+            eq(actorClaimAccess.actorId, actors.id),
+            eq(actors.householdId, actor.householdId),
+          ),
+        )
+        .where(
+          actor.claimIds === undefined
+            ? undefined
+            : actor.claimIds.length
+              ? inArray(actorClaimAccess.claimId, actor.claimIds)
+              : sql`false`,
+        ),
+    ]);
   const actorPermissionMap = new Map<string, string[]>();
   const actorRoleCount = new Map<string, number>();
   for (const account of accounts) {
@@ -200,8 +254,13 @@ export const load: PageServerLoad = async ({ locals }) => {
         );
       return {
         ...account,
+        selectedClaimIds: claimGrants
+          .filter((grant) => grant.actorId === account.id)
+          .map((grant) => grant.claimId),
         canReset: resetWithinAuthority,
         canToggle: account.id !== actor.id && canAdminister,
+        canEditClaimAccess:
+          canAdminister && locals.actor!.claimIds === undefined,
         canEditPermissions:
           account.kind === "service" &&
           account.roleSystem === false &&
@@ -212,6 +271,7 @@ export const load: PageServerLoad = async ({ locals }) => {
     roles: householdRoles.filter((role) =>
       canAdministerPermissions(actor.permissions, role.permissions),
     ),
+    claims: householdClaims,
     grantablePermissions: permissions.filter(
       (permission) =>
         actor.permissions.includes("*") ||
@@ -463,6 +523,93 @@ export const actions: Actions = {
       });
     }
     return { permissionsSaved: true };
+  },
+  claims: async ({ locals, request }) => {
+    if (!locals.actor || !requireManager(locals.actor))
+      return fail(403, { error: "Not authorized." });
+    if (locals.actor.claimIds !== undefined) {
+      return fail(403, {
+        error:
+          "Only an administrator with access to all claims can change claim access.",
+      });
+    }
+    const form = await request.formData();
+    const actorId = String(form.get("actorId") ?? "");
+    const scope = String(form.get("claimAccessScope") ?? "");
+    if (scope !== "all" && scope !== "selected") {
+      return fail(400, { error: "Choose all claims or selected claims." });
+    }
+    const requestedClaimIds = [
+      ...new Set(form.getAll("claimId").map(String).filter(Boolean)),
+    ];
+    const target = await accountAuthority(actorId, locals.actor.householdId);
+    if (!target) return fail(404, { error: "Account not found." });
+    if (
+      !canAdministerPermissions(locals.actor.permissions, target.permissions)
+    ) {
+      return fail(403, {
+        error: "You cannot manage an account with permissions you do not hold.",
+      });
+    }
+    const database = requireDb();
+    if (scope === "selected" && requestedClaimIds.length) {
+      const validClaims = await database
+        .select({ id: claims.id })
+        .from(claims)
+        .where(
+          and(
+            eq(claims.householdId, locals.actor.householdId),
+            inArray(claims.id, requestedClaimIds),
+          ),
+        );
+      if (validClaims.length !== requestedClaimIds.length) {
+        return fail(400, {
+          error: "One or more selected claims are unavailable.",
+        });
+      }
+    }
+    await database.transaction(async (tx) => {
+      await tx
+        .update(actors)
+        .set({
+          claimAccessScope: scope,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(actors.id, actorId),
+            eq(actors.householdId, locals.actor!.householdId),
+          ),
+        );
+      await tx
+        .delete(actorClaimAccess)
+        .where(eq(actorClaimAccess.actorId, actorId));
+      if (scope === "selected" && requestedClaimIds.length) {
+        await tx.insert(actorClaimAccess).values(
+          requestedClaimIds.map((claimId) => ({
+            actorId,
+            claimId,
+            grantedByActorId: locals.actor!.id,
+          })),
+        );
+      }
+      await tx.insert(auditEvents).values({
+        householdId: locals.actor!.householdId,
+        actorId: locals.actor!.id,
+        action: "account.claim_access.update",
+        resourceType: "actor",
+        resourceId: actorId,
+        summary:
+          scope === "all"
+            ? "Granted access to all claims"
+            : `Limited claim access to ${requestedClaimIds.length} selected claim${requestedClaimIds.length === 1 ? "" : "s"}`,
+        metadata: {
+          scope,
+          claimIds: scope === "selected" ? requestedClaimIds : [],
+        },
+      });
+    });
+    return { claimAccessSaved: true };
   },
   reset: async ({ locals, request, url }) => {
     if (!locals.actor || !requireManager(locals.actor))

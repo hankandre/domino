@@ -10,6 +10,7 @@ import {
   type JWTPayload,
 } from "jose";
 import {
+  actorClaimAccess,
   actorRoles,
   actors,
   households,
@@ -67,6 +68,8 @@ export type AuthenticatedActor = {
   householdId: string;
   kind: "user" | "service";
   permissions: string[];
+  claimAccessScope: "all" | "selected";
+  claimIds?: string[];
   user?: {
     id: string;
     email: string;
@@ -579,6 +582,20 @@ async function resolveProvisioningHousehold(tx: Transaction, email: string) {
       permissions: roleTemplates["claim-assistant"].permissions,
       system: true,
     },
+    {
+      householdId: household.id,
+      name: "Inventory Contributor",
+      description: roleTemplates["inventory-contributor"].description,
+      permissions: roleTemplates["inventory-contributor"].permissions,
+      system: true,
+    },
+    {
+      householdId: household.id,
+      name: "Household Agent",
+      description: roleTemplates["household-agent"].description,
+      permissions: roleTemplates["household-agent"].permissions,
+      system: true,
+    },
   ]);
   process.env.DOMINO_OIDC_HOUSEHOLD_ID = household.id;
   return { id: household.id, bootstrapped: true };
@@ -637,6 +654,7 @@ export async function authenticateSessionToken(
       actorId: actors.id,
       householdId: actors.householdId,
       kind: actors.kind,
+      claimAccessScope: actors.claimAccessScope,
       userId: users.id,
       email: users.email,
       displayName: users.displayName,
@@ -667,11 +685,22 @@ export async function authenticateSessionToken(
         eq(roles.householdId, record.householdId),
       ),
     );
+  const claimIds =
+    record.claimAccessScope === "selected"
+      ? (
+          await database
+            .select({ claimId: actorClaimAccess.claimId })
+            .from(actorClaimAccess)
+            .where(eq(actorClaimAccess.actorId, record.actorId))
+        ).map((item) => item.claimId)
+      : undefined;
   return {
     id: record.actorId,
     householdId: record.householdId,
     kind: record.kind,
     permissions: [...new Set(grants.flatMap((grant) => grant.permissions))],
+    claimAccessScope: record.claimAccessScope,
+    claimIds,
     user: {
       id: record.userId,
       email: record.email,

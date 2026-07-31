@@ -23,12 +23,39 @@
       page.url.pathname.startsWith("/invite/") ||
       page.url.pathname.startsWith("/reset/"),
   );
+  const canAny = (required: string[]) =>
+    Boolean(
+      data.actor?.permissions.includes("*") ||
+      required.some((permission) =>
+        data.actor?.permissions.includes(permission),
+      ),
+    );
 
   const nav = [
-    { href: "/", label: "Inventory", icon: LayoutGrid },
-    { href: "/claims", label: "Claims", icon: ClipboardCheck },
-    { href: "/documents", label: "Documents", icon: FileText },
-    { href: "/archive", label: "Archive", icon: Archive },
+    {
+      href: "/",
+      label: "Inventory",
+      icon: LayoutGrid,
+      permissions: ["products:read", "warranties:read"],
+    },
+    {
+      href: "/claims",
+      label: "Claims",
+      icon: ClipboardCheck,
+      permissions: ["claims:read"],
+    },
+    {
+      href: "/documents",
+      label: "Documents",
+      icon: FileText,
+      permissions: ["documents:read"],
+    },
+    {
+      href: "/archive",
+      label: "Archive",
+      icon: Archive,
+      permissions: ["products:read", "warranties:read"],
+    },
   ];
 
   function closeMobileNavigation() {
@@ -127,25 +154,28 @@
 
       <nav class="flex-1 space-y-1 p-3">
         {#each nav as item}
-          {@const Icon = item.icon}
-          <a
-            href={item.href}
-            aria-current={page.url.pathname === item.href ||
-            (item.href !== "/" && page.url.pathname.startsWith(`${item.href}/`))
-              ? "page"
-              : undefined}
-            onclick={() => (mobileNavOpen = false)}
-            class={`group flex min-h-11 items-center gap-3 px-3 text-sm font-semibold transition-colors ${
-              page.url.pathname === item.href ||
+          {#if canAny(item.permissions)}
+            {@const Icon = item.icon}
+            <a
+              href={item.href}
+              aria-current={page.url.pathname === item.href ||
               (item.href !== "/" &&
                 page.url.pathname.startsWith(`${item.href}/`))
-                ? "bg-white text-ink"
-                : "text-white/70 hover:bg-white/10 hover:text-white"
-            }`}
-          >
-            <Icon size={18} strokeWidth={1.8} />
-            <span>{item.label}</span>
-          </a>
+                ? "page"
+                : undefined}
+              onclick={() => (mobileNavOpen = false)}
+              class={`group flex min-h-11 items-center gap-3 px-3 text-sm font-semibold transition-colors ${
+                page.url.pathname === item.href ||
+                (item.href !== "/" &&
+                  page.url.pathname.startsWith(`${item.href}/`))
+                  ? "bg-white text-ink"
+                  : "text-white/70 hover:bg-white/10 hover:text-white"
+              }`}
+            >
+              <Icon size={18} strokeWidth={1.8} />
+              <span>{item.label}</span>
+            </a>
+          {/if}
         {/each}
       </nav>
 
@@ -169,18 +199,22 @@
             {/if}
           </div>
         {/if}
-        <a
-          href="/settings/access"
-          class="flex min-h-11 items-center gap-3 px-3 text-sm font-semibold text-white/68 hover:bg-white/8 hover:text-white"
-        >
-          <Users size={18} strokeWidth={1.8} /> Access
-        </a>
-        <a
-          href="/settings"
-          class="flex min-h-11 items-center gap-3 px-3 text-sm font-semibold text-white/68 hover:bg-white/8 hover:text-white"
-        >
-          <Settings size={18} strokeWidth={1.8} /> Settings
-        </a>
+        {#if canAny(["household:manage"])}
+          <a
+            href="/settings/access"
+            class="flex min-h-11 items-center gap-3 px-3 text-sm font-semibold text-white/68 hover:bg-white/8 hover:text-white"
+          >
+            <Users size={18} strokeWidth={1.8} /> Access
+          </a>
+        {/if}
+        {#if canAny(["household:manage", "integrations:manage"])}
+          <a
+            href="/settings"
+            class="flex min-h-11 items-center gap-3 px-3 text-sm font-semibold text-white/68 hover:bg-white/8 hover:text-white"
+          >
+            <Settings size={18} strokeWidth={1.8} /> Settings
+          </a>
+        {/if}
         <div class="mt-3 border border-white/12 bg-white/5 p-3">
           <div
             class="text-[0.65rem] font-bold tracking-[0.08em] text-white/50 uppercase"
@@ -236,13 +270,17 @@
           />
           Domino
         </a>
-        <a
-          href="/products/new"
-          class="grid size-10 place-items-center bg-ink text-white"
-          aria-label="Add product"
-        >
-          <span class="text-2xl font-light">+</span>
-        </a>
+        {#if canAny(["products:create", "warranties:write"])}
+          <a
+            href="/products/new"
+            class="grid size-10 place-items-center bg-ink text-white"
+            aria-label="Add product"
+          >
+            <span class="text-2xl font-light">+</span>
+          </a>
+        {:else}
+          <span class="size-10" aria-hidden="true"></span>
+        {/if}
       </header>
 
       <main id="main-content" class="min-h-screen" tabindex="-1">

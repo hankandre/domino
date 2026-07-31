@@ -2,7 +2,9 @@ use clap::{Args, Parser, Subcommand};
 use reqwest::{Client, Method, Url, multipart, redirect::Policy};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{
+    collections::BTreeSet,
     env,
     fs::{DirBuilder, Permissions},
     os::unix::fs::DirBuilderExt,
@@ -72,6 +74,10 @@ enum Command {
     Document {
         #[command(subcommand)]
         command: DocumentCommand,
+    },
+    Record {
+        #[command(subcommand)]
+        command: RecordCommand,
     },
     Whoami,
     Broker {
@@ -258,6 +264,8 @@ enum DocumentCommand {
     Upload {
         path: PathBuf,
         #[arg(long)]
+        name: Option<String>,
+        #[arg(long)]
         product_id: Option<String>,
         #[arg(long)]
         claim_id: Option<String>,
@@ -281,6 +289,66 @@ enum DocumentCommand {
     Restore {
         id: String,
     },
+}
+
+#[derive(Subcommand)]
+enum RecordCommand {
+    Validate {
+        #[arg(long)]
+        file: PathBuf,
+    },
+    Create {
+        #[arg(long)]
+        file: PathBuf,
+    },
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RecordManifest {
+    #[serde(default)]
+    submission_id: Option<String>,
+    product: Value,
+    #[serde(default)]
+    warranties: Vec<Value>,
+    #[serde(default)]
+    notes: Vec<String>,
+    #[serde(default)]
+    sources: Vec<Value>,
+    #[serde(default)]
+    allow_duplicate_of: Option<String>,
+    #[serde(default)]
+    image: Option<RecordImage>,
+    #[serde(default)]
+    documents: Vec<RecordDocument>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RecordImage {
+    #[serde(default)]
+    url: Option<String>,
+    #[serde(default)]
+    path: Option<PathBuf>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RecordDocument {
+    #[serde(default)]
+    path: Option<PathBuf>,
+    #[serde(default)]
+    paperless_document_id: Option<u64>,
+    #[serde(default = "default_document_kind")]
+    kind: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    backend: Option<String>,
+}
+
+fn default_document_kind() -> String {
+    "other".to_owned()
 }
 
 #[derive(Subcommand)]
@@ -486,6 +554,17 @@ async fn direct_request(
     path: &str,
     body: Option<Value>,
 ) -> Result<Value> {
+    direct_request_with_headers(session, requested_server, method, path, body, &[]).await
+}
+
+async fn direct_request_with_headers(
+    session: &Session,
+    requested_server: Option<&str>,
+    method: Method,
+    path: &str,
+    body: Option<Value>,
+    headers: &[(&str, &str)],
+) -> Result<Value> {
     let session_server = origin(&session.server)?;
     if let Some(requested) = requested_server
         && origin(requested)? != session_server
@@ -502,6 +581,9 @@ async fn direct_request(
         .header("accept", "application/json");
     if let Some(value) = body {
         request = request.json(&value);
+    }
+    for (name, value) in headers {
+        request = request.header(*name, *value);
     }
     let response = request.send().await?;
     response_value(response).await
@@ -538,6 +620,36 @@ async fn invoke(cli: &Cli, method: Method, path: &str, body: Option<Value>) -> R
     }
     let session = load_session(&cli.credential_file).await?;
     direct_request(&session, cli.server.as_deref(), method, path, body).await
+}
+
+async fn invoke_idempotent(
+    cli: &Cli,
+    method: Method,
+    path: &str,
+    body: Option<Value>,
+    idempotency_key: &str,
+) -> Result<Value> {
+    let body = body.map(compact_json);
+    if let Some(socket) = &cli.socket {
+        return socket_request_with_headers(
+            socket,
+            method.as_str(),
+            path,
+            body.as_ref(),
+            &[("Idempotency-Key", idempotency_key)],
+        )
+        .await;
+    }
+    let session = load_session(&cli.credential_file).await?;
+    direct_request_with_headers(
+        &session,
+        cli.server.as_deref(),
+        method,
+        path,
+        body,
+        &[("Idempotency-Key", idempotency_key)],
+    )
+    .await
 }
 
 fn compact_json(mut value: Value) -> Value {
@@ -597,6 +709,7 @@ async fn main() {
 }
 
 async fn run(cli: Cli) -> Result<()> {
+    let mut incomplete_record = false;
     let result = match &cli.command {
         Command::Auth { command } => return run_auth(&cli, command).await,
         Command::Search(args) => {
@@ -641,10 +754,20 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Claim { command } => run_claim(&cli, command).await?,
         Command::Note { command } => run_note(&cli, command).await?,
         Command::Document { command } => run_document(&cli, command).await?,
+        Command::Record { command } => {
+            let result = run_record(&cli, command).await?;
+            incomplete_record = result.get("complete").and_then(Value::as_bool) == Some(false);
+            result
+        }
         Command::Whoami => invoke(&cli, Method::GET, "/api/v1/me", None).await?,
         Command::Broker { command } => return run_broker(&cli, command).await,
     };
     print_value(&result, cli.json);
+    if incomplete_record {
+        return Err(
+            "Product metadata was saved, but an attachment failed. Retry the same manifest.".into(),
+        );
+    }
     Ok(())
 }
 
@@ -953,21 +1076,12 @@ async fn run_document(cli: &Cli, command: &DocumentCommand) -> Result<Value> {
         }
         DocumentCommand::Upload {
             path,
+            name,
             product_id,
             claim_id,
             kind,
             backend,
         } => {
-            if cli.socket.is_some() {
-                return Err("Document upload is not exposed through the JSON broker. Link an existing Paperless document or use direct mode.".into());
-            }
-            let session = load_session(&cli.credential_file).await?;
-            let session_server = origin(&session.server)?;
-            if let Some(requested) = cli.server.as_deref()
-                && origin(requested)? != session_server
-            {
-                return Err("Credential/server origin mismatch.".into());
-            }
             let metadata = fs::metadata(path).await?;
             if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_UPLOAD_BYTES {
                 return Err("Attachments must be regular files between 1 byte and 50 MiB.".into());
@@ -978,9 +1092,36 @@ async fn run_document(cli: &Cli, command: &DocumentCommand) -> Result<Value> {
                 .and_then(|name| name.to_str())
                 .unwrap_or("attachment")
                 .to_owned();
+            if let Some(socket) = &cli.socket {
+                let mut fields = vec![("kind", kind.clone())];
+                if let Some(value) = product_id {
+                    fields.push(("productId", value.clone()));
+                }
+                if let Some(value) = claim_id {
+                    fields.push(("claimId", value.clone()));
+                }
+                if let Some(value) = backend {
+                    fields.push(("backend", value.clone()));
+                }
+                if let Some(value) = name {
+                    fields.push(("name", value.clone()));
+                }
+                return socket_multipart_request(socket, "/api/v1/documents", path, &fields, None)
+                    .await;
+            }
+            let session = load_session(&cli.credential_file).await?;
+            let session_server = origin(&session.server)?;
+            if let Some(requested) = cli.server.as_deref()
+                && origin(requested)? != session_server
+            {
+                return Err("Credential/server origin mismatch.".into());
+            }
             let mut form = multipart::Form::new()
                 .part("file", multipart::Part::bytes(bytes).file_name(file_name))
                 .text("kind", kind.clone());
+            if let Some(value) = name {
+                form = form.text("name", value.clone());
+            }
             if let Some(value) = product_id {
                 form = form.text("productId", value.clone());
             }
@@ -1019,6 +1160,289 @@ async fn run_document(cli: &Cli, command: &DocumentCommand) -> Result<Value> {
     }
 }
 
+async fn read_record_manifest(file: &Path) -> Result<(RecordManifest, PathBuf)> {
+    let (bytes, base) = if file == Path::new("-") {
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut std::io::stdin(), &mut bytes)?;
+        (bytes, env::current_dir()?)
+    } else {
+        let bytes = fs::read(file).await?;
+        let base = file
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        (bytes, std::fs::canonicalize(base)?)
+    };
+    let manifest: RecordManifest = serde_json::from_slice(&bytes)?;
+    if !manifest.product.is_object() {
+        return Err("Record manifest product must be a JSON object.".into());
+    }
+    Ok((manifest, base))
+}
+
+fn record_metadata(manifest: &RecordManifest) -> Value {
+    compact_json(json!({
+        "product": manifest.product,
+        "warranties": manifest.warranties,
+        "notes": manifest.notes,
+        "sources": manifest.sources,
+        "allowDuplicateOf": manifest.allow_duplicate_of
+    }))
+}
+
+fn stable_record_key(manifest: &RecordManifest) -> Result<String> {
+    if let Some(value) = manifest.submission_id.as_deref() {
+        if value.len() < 8 || value.len() > 200 {
+            return Err("submissionId must contain between 8 and 200 characters.".into());
+        }
+        if value.chars().any(char::is_control) {
+            return Err("submissionId cannot contain control characters.".into());
+        }
+        return Ok(value.to_owned());
+    }
+    let digest = Sha256::digest(serde_json::to_vec(manifest)?);
+    Ok(format!(
+        "manifest-{}",
+        digest
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    ))
+}
+
+async fn record_attachment_missing_permissions(
+    cli: &Cli,
+    manifest: &RecordManifest,
+) -> Result<Vec<String>> {
+    let identity = invoke(cli, Method::GET, "/api/v1/me", None).await?;
+    let granted = identity
+        .get("actor")
+        .and_then(|actor| actor.get("permissions"))
+        .and_then(Value::as_array)
+        .ok_or("Domino identity response did not include permissions")?
+        .iter()
+        .filter_map(Value::as_str)
+        .collect::<BTreeSet<_>>();
+    if granted.contains("*") {
+        return Ok(Vec::new());
+    }
+    let mut missing = BTreeSet::new();
+    if manifest.image.is_some() && !granted.contains("images:attach") {
+        missing.insert("images:attach");
+    }
+    if !manifest.documents.is_empty() && !granted.contains("documents:attach") {
+        missing.insert("documents:attach");
+    }
+    if manifest
+        .documents
+        .iter()
+        .any(|document| document.paperless_document_id.is_some())
+        && !granted.contains("paperless:discover")
+    {
+        missing.insert("paperless:discover");
+    }
+    Ok(missing.into_iter().map(str::to_owned).collect())
+}
+
+fn merge_missing_permissions(result: &mut Value, additional: Vec<String>) {
+    let Some(object) = result.as_object_mut() else {
+        return;
+    };
+    let mut missing = object
+        .get("missingPermissions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>();
+    missing.extend(additional);
+    if !missing.is_empty() {
+        object.insert("valid".to_owned(), Value::Bool(false));
+    }
+    object.insert(
+        "missingPermissions".to_owned(),
+        Value::Array(missing.into_iter().map(Value::String).collect()),
+    );
+}
+
+fn resolve_manifest_path(base: &Path, path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_owned()
+    } else {
+        base.join(path)
+    }
+}
+
+async fn upload_product_image(
+    cli: &Cli,
+    product_id: &str,
+    path: &Path,
+    idempotency_key: &str,
+) -> Result<Value> {
+    if let Some(socket) = &cli.socket {
+        return socket_multipart_request(
+            socket,
+            &format!("/api/v1/products/{}/images", encode(product_id)),
+            path,
+            &[],
+            Some(idempotency_key),
+        )
+        .await;
+    }
+    let metadata = fs::metadata(path).await?;
+    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > 10 * 1024 * 1024 {
+        return Err("Product images must be regular files between 1 byte and 10 MiB.".into());
+    }
+    let session = load_session(&cli.credential_file).await?;
+    let session_server = origin(&session.server)?;
+    let bytes = fs::read(path).await?;
+    let filename = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("product-image")
+        .to_owned();
+    let part = multipart::Part::bytes(bytes)
+        .file_name(filename)
+        .mime_str(content_type_for_path(path))?;
+    let response = hardened_client()?
+        .post(
+            Url::parse(&session_server)?
+                .join(&format!("/api/v1/products/{}/images", encode(product_id)))?,
+        )
+        .bearer_auth(&session.access_token)
+        .header("idempotency-key", idempotency_key)
+        .multipart(multipart::Form::new().part("file", part))
+        .send()
+        .await?;
+    response_value(response).await
+}
+
+async fn run_record(cli: &Cli, command: &RecordCommand) -> Result<Value> {
+    let file = match command {
+        RecordCommand::Validate { file } | RecordCommand::Create { file } => file,
+    };
+    let (manifest, base) = read_record_manifest(file).await?;
+    let metadata = record_metadata(&manifest);
+    if matches!(command, RecordCommand::Validate { .. }) {
+        let mut result = invoke(
+            cli,
+            Method::POST,
+            "/api/v1/product-records/validate",
+            Some(metadata),
+        )
+        .await?;
+        merge_missing_permissions(
+            &mut result,
+            record_attachment_missing_permissions(cli, &manifest).await?,
+        );
+        return Ok(result);
+    }
+    let missing_permissions = record_attachment_missing_permissions(cli, &manifest).await?;
+    if !missing_permissions.is_empty() {
+        return Err(format!(
+            "Missing permissions for record attachments: {}",
+            missing_permissions.join(", ")
+        )
+        .into());
+    }
+    let submission_key = stable_record_key(&manifest)?;
+    let mut result = invoke_idempotent(
+        cli,
+        Method::POST,
+        "/api/v1/product-records",
+        Some(metadata),
+        &submission_key,
+    )
+    .await?;
+    let product_id = result
+        .get("product")
+        .and_then(|product| product.get("id"))
+        .and_then(Value::as_str)
+        .ok_or("Product-record response did not include a product id")?
+        .to_owned();
+    let mut components = Vec::new();
+
+    if let Some(image) = &manifest.image {
+        let component_key = format!("{submission_key}:image");
+        let uploaded = if let Some(url) = image.url.as_deref() {
+            invoke_idempotent(
+                cli,
+                Method::POST,
+                &format!("/api/v1/products/{}/images/from-url", encode(&product_id)),
+                Some(json!({"imageUrl": url})),
+                &component_key,
+            )
+            .await
+        } else if let Some(path) = image.path.as_deref() {
+            upload_product_image(
+                cli,
+                &product_id,
+                &resolve_manifest_path(&base, path),
+                &component_key,
+            )
+            .await
+        } else {
+            Err("Record image requires url or path.".into())
+        };
+        components.push(match uploaded {
+            Ok(value) => json!({"component": "image", "status": "complete", "result": value}),
+            Err(cause) => {
+                json!({"component": "image", "status": "failed", "error": cause.to_string()})
+            }
+        });
+    }
+
+    for (index, document) in manifest.documents.iter().enumerate() {
+        let component = format!("document:{}", index + 1);
+        let uploaded = if let Some(paperless_id) = document.paperless_document_id {
+            invoke_idempotent(
+                cli,
+                Method::POST,
+                "/api/v1/documents/link-paperless",
+                Some(json!({
+                    "paperlessDocumentId": paperless_id,
+                    "productId": product_id,
+                    "kind": document.kind
+                })),
+                &format!("{submission_key}:{component}"),
+            )
+            .await
+        } else if let Some(path) = document.path.as_deref() {
+            let resolved = resolve_manifest_path(&base, path);
+            run_document(
+                cli,
+                &DocumentCommand::Upload {
+                    path: resolved,
+                    name: document.name.clone(),
+                    product_id: Some(product_id.clone()),
+                    claim_id: None,
+                    kind: document.kind.clone(),
+                    backend: document.backend.clone(),
+                },
+            )
+            .await
+        } else {
+            Err("Record document requires path or paperlessDocumentId.".into())
+        };
+        components.push(match uploaded {
+            Ok(value) => json!({"component": component, "status": "complete", "result": value}),
+            Err(cause) => {
+                json!({"component": component, "status": "failed", "error": cause.to_string()})
+            }
+        });
+    }
+    let complete = components
+        .iter()
+        .all(|item| item.get("status").and_then(Value::as_str) == Some("complete"));
+    if let Some(object) = result.as_object_mut() {
+        object.insert("components".to_owned(), Value::Array(components));
+        object.insert("complete".to_owned(), Value::Bool(complete));
+        object.insert("submissionId".to_owned(), Value::String(submission_key));
+    }
+    Ok(result)
+}
+
 fn encode(value: &str) -> String {
     url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
 }
@@ -1029,13 +1453,27 @@ async fn socket_request(
     path: &str,
     body: Option<&Value>,
 ) -> Result<Value> {
+    socket_request_with_headers(socket, method, path, body, &[]).await
+}
+
+async fn socket_request_with_headers(
+    socket: &Path,
+    method: &str,
+    path: &str,
+    body: Option<&Value>,
+    headers: &[(&str, &str)],
+) -> Result<Value> {
     let payload = body
         .map(serde_json::to_vec)
         .transpose()?
         .unwrap_or_default();
     let mut stream = UnixStream::connect(socket).await?;
+    let extra_headers = headers
+        .iter()
+        .map(|(name, value)| format!("{name}: {value}\r\n"))
+        .collect::<String>();
     let request = format!(
-        "{method} {path} HTTP/1.1\r\nHost: domino\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        "{method} {path} HTTP/1.1\r\nHost: domino\r\nContent-Type: application/json\r\n{extra_headers}Content-Length: {}\r\nConnection: close\r\n\r\n",
         payload.len()
     );
     stream.write_all(request.as_bytes()).await?;
@@ -1069,6 +1507,119 @@ async fn socket_request(
         return Err(format!("Domino broker returned {status}: {value}").into());
     }
     Ok(value)
+}
+
+async fn socket_multipart_request(
+    socket: &Path,
+    path: &str,
+    file_path: &Path,
+    fields: &[(&str, String)],
+    idempotency_key: Option<&str>,
+) -> Result<Value> {
+    let metadata = fs::metadata(file_path).await?;
+    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_UPLOAD_BYTES {
+        return Err("Attachments must be regular files between 1 byte and 50 MiB.".into());
+    }
+    let filename = file_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("attachment")
+        .replace(['\r', '\n', '"'], "_");
+    let boundary = format!(
+        "domino-{}-{}",
+        std::process::id(),
+        SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+    );
+    let mut preamble = Vec::with_capacity(4096);
+    for (name, value) in fields {
+        preamble.extend_from_slice(
+            format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
+            )
+            .as_bytes(),
+        );
+    }
+    preamble.extend_from_slice(
+        format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: {}\r\n\r\n",
+            content_type_for_path(file_path)
+        )
+        .as_bytes(),
+    );
+    let closing = format!("\r\n--{boundary}--\r\n").into_bytes();
+    let content_length = preamble.len() as u64 + metadata.len() + closing.len() as u64;
+    let mut stream = UnixStream::connect(socket).await?;
+    let idempotency = idempotency_key
+        .map(|value| format!("Idempotency-Key: {value}\r\n"))
+        .unwrap_or_default();
+    let request = format!(
+        "POST {path} HTTP/1.1\r\nHost: domino\r\nContent-Type: multipart/form-data; boundary={boundary}\r\n{idempotency}Content-Length: {}\r\nConnection: close\r\n\r\n",
+        content_length
+    );
+    stream.write_all(request.as_bytes()).await?;
+    stream.write_all(&preamble).await?;
+    let mut file = fs::File::open(file_path).await?;
+    let mut chunk = [0u8; 64 * 1024];
+    loop {
+        let count = file.read(&mut chunk).await?;
+        if count == 0 {
+            break;
+        }
+        stream.write_all(&chunk[..count]).await?;
+    }
+    stream.write_all(&closing).await?;
+    read_socket_response(stream).await
+}
+
+async fn read_socket_response(stream: UnixStream) -> Result<Value> {
+    let mut response = Vec::new();
+    timeout(
+        Duration::from_secs(65),
+        stream
+            .take((MAX_RESPONSE_BYTES + BROKER_HEADER_BYTES + 1) as u64)
+            .read_to_end(&mut response),
+    )
+    .await
+    .map_err(|_| "Timed out waiting for the broker response")??;
+    if response.len() > MAX_RESPONSE_BYTES + BROKER_HEADER_BYTES {
+        return Err("Broker response exceeded 10 MiB.".into());
+    }
+    let split = response
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .ok_or("Invalid broker response")?;
+    let head = String::from_utf8_lossy(&response[..split]);
+    let status = head
+        .split_whitespace()
+        .nth(1)
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(500);
+    let value: Value = serde_json::from_slice(&response[split + 4..]).unwrap_or_else(|_| {
+        Value::String(String::from_utf8_lossy(&response[split + 4..]).into_owned())
+    });
+    if status >= 400 {
+        return Err(format!("Domino broker returned {status}: {value}").into());
+    }
+    Ok(value)
+}
+
+fn content_type_for_path(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "pdf" => "application/pdf",
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" => "image/png",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "avif" => "image/avif",
+        "txt" => "text/plain",
+        _ => "application/octet-stream",
+    }
 }
 
 async fn run_broker(cli: &Cli, command: &BrokerCommand) -> Result<()> {
@@ -1170,7 +1721,9 @@ async fn serve_broker_request(mut stream: UnixStream, server: &str, token: &str)
         )
         .await;
     }
-    let content_length = lines
+    let header_lines = lines.collect::<Vec<_>>();
+    let content_length = header_lines
+        .iter()
         .find_map(|line| {
             line.to_ascii_lowercase()
                 .strip_prefix("content-length:")
@@ -1178,8 +1731,110 @@ async fn serve_broker_request(mut stream: UnixStream, server: &str, token: &str)
                 .and_then(|value| value.parse::<usize>().ok())
         })
         .unwrap_or(0);
-    if content_length > 1_000_000 {
+    let content_type = header_lines
+        .iter()
+        .find_map(|line| {
+            line.to_ascii_lowercase()
+                .strip_prefix("content-type:")
+                .map(str::trim)
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| "application/json".to_owned());
+    let idempotency_key = header_lines.iter().find_map(|line| {
+        line.to_ascii_lowercase()
+            .strip_prefix("idempotency-key:")
+            .map(str::trim)
+            .map(str::to_owned)
+    });
+    let multipart = content_type.starts_with("multipart/form-data;");
+    if multipart && (method != "POST" || !broker_multipart_path_allowed(&path)) {
+        return write_broker_error(
+            &mut stream,
+            403,
+            "Multipart requests are limited to document and product-image uploads",
+        )
+        .await;
+    }
+    let request_limit = if multipart {
+        MAX_UPLOAD_BYTES as usize + 256 * 1024
+    } else {
+        1_000_000
+    };
+    if content_length > request_limit {
         return write_broker_error(&mut stream, 413, "Request too large").await;
+    }
+    let upstream_method = match Method::from_bytes(method.as_bytes()) {
+        Ok(value) => value,
+        Err(_) => {
+            return write_broker_error(&mut stream, 400, "Invalid HTTP method").await;
+        }
+    };
+    if multipart {
+        let initial_body = bytes[header_end..]
+            .get(..content_length.min(bytes.len().saturating_sub(header_end)))
+            .unwrap_or_default()
+            .to_vec();
+        let remaining = content_length.saturating_sub(initial_body.len());
+        let (mut socket_reader, mut socket_writer) = tokio::io::split(stream);
+        let (mut body_writer, body_reader) = tokio::io::duplex(64 * 1024);
+        let mut feeder = tokio::spawn(async move {
+            body_writer.write_all(&initial_body).await?;
+            let mut remaining = remaining;
+            let mut chunk = [0u8; 64 * 1024];
+            while remaining > 0 {
+                let maximum = remaining.min(chunk.len());
+                let count = timeout(
+                    Duration::from_secs(10),
+                    socket_reader.read(&mut chunk[..maximum]),
+                )
+                .await
+                .map_err(|_| "Timed out reading broker request body")??;
+                if count == 0 {
+                    return Err::<(), Box<dyn std::error::Error + Send + Sync>>(
+                        "Incomplete request body".into(),
+                    );
+                }
+                body_writer.write_all(&chunk[..count]).await?;
+                remaining -= count;
+            }
+            body_writer.shutdown().await?;
+            Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+        });
+        let mut request = hardened_client()?
+            .request(upstream_method, upstream)
+            .bearer_auth(token)
+            .header("content-type", content_type)
+            .header("content-length", content_length)
+            .body(reqwest::Body::wrap_stream(
+                tokio_util::io::ReaderStream::new(body_reader),
+            ));
+        if let Some(value) = idempotency_key {
+            request = request.header("idempotency-key", value);
+        }
+        let mut upstream_request = Box::pin(request.send());
+        let response = tokio::select! {
+            result = &mut upstream_request => {
+                feeder.abort();
+                result
+            }
+            feed_result = &mut feeder => {
+                match feed_result {
+                    Ok(Ok(())) => upstream_request.await,
+                    Ok(Err(_)) | Err(_) => {
+                        return write_broker_error(
+                            &mut socket_writer,
+                            400,
+                            "Incomplete or timed-out request body",
+                        )
+                        .await;
+                    }
+                }
+            }
+        };
+        return match response {
+            Ok(response) => write_broker_response(&mut socket_writer, response).await,
+            Err(_) => write_broker_error(&mut socket_writer, 502, "Upstream request failed").await,
+        };
     }
     while bytes.len() < header_end + content_length {
         let count = timeout(Duration::from_secs(10), stream.read(&mut chunk))
@@ -1193,37 +1848,27 @@ async fn serve_broker_request(mut stream: UnixStream, server: &str, token: &str)
     if bytes.len() < header_end + content_length {
         return write_broker_error(&mut stream, 400, "Incomplete request body").await;
     }
-    let mut response = hardened_client()?
-        .request(Method::from_bytes(method.as_bytes())?, upstream)
+    let mut request = hardened_client()?
+        .request(upstream_method, upstream)
         .bearer_auth(token)
-        .header("content-type", "application/json")
-        .body(bytes[header_end..header_end + content_length].to_vec())
-        .send()
-        .await?;
-    let status = response.status();
-    if response
-        .content_length()
-        .is_some_and(|length| length > MAX_RESPONSE_BYTES as u64)
-    {
-        return write_broker_error(&mut stream, 502, "Upstream response too large").await;
+        .header("content-type", content_type)
+        .body(bytes[header_end..header_end + content_length].to_vec());
+    if let Some(value) = idempotency_key {
+        request = request.header("idempotency-key", value);
     }
-    let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await? {
-        if body.len() + chunk.len() > MAX_RESPONSE_BYTES {
-            return write_broker_error(&mut stream, 502, "Upstream response too large").await;
-        }
-        body.extend_from_slice(&chunk);
+    let response = request.send().await?;
+    write_broker_response(&mut stream, response).await
+}
+
+fn broker_multipart_path_allowed(path: &str) -> bool {
+    if path == "/api/v1/documents" {
+        return true;
     }
-    let reason = status.canonical_reason().unwrap_or("Response");
-    let header = format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        status.as_u16(),
-        reason,
-        body.len()
-    );
-    stream.write_all(header.as_bytes()).await?;
-    stream.write_all(&body).await?;
-    Ok(())
+    let segments = path.split('/').collect::<Vec<_>>();
+    segments.len() == 6
+        && segments[..4] == ["", "api", "v1", "products"]
+        && segments[5] == "images"
+        && segments[4].parse::<uuid::Uuid>().is_ok()
 }
 
 fn broker_upstream_url(server: &str, path: &str) -> Result<Url> {
@@ -1244,10 +1889,43 @@ fn broker_upstream_url(server: &str, path: &str) -> Result<Url> {
     Ok(target)
 }
 
-async fn write_broker_error(stream: &mut UnixStream, status: u16, message: &str) -> Result<()> {
+async fn write_broker_error<W>(stream: &mut W, status: u16, message: &str) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
     let body = serde_json::to_vec(&json!({"error": message}))?;
     let header = format!(
         "HTTP/1.1 {status} Error\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    stream.write_all(header.as_bytes()).await?;
+    stream.write_all(&body).await?;
+    Ok(())
+}
+
+async fn write_broker_response<W>(stream: &mut W, mut response: reqwest::Response) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let status = response.status();
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_RESPONSE_BYTES as u64)
+    {
+        return write_broker_error(stream, 502, "Upstream response too large").await;
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        if body.len() + chunk.len() > MAX_RESPONSE_BYTES {
+            return write_broker_error(stream, 502, "Upstream response too large").await;
+        }
+        body.extend_from_slice(&chunk);
+    }
+    let reason = status.canonical_reason().unwrap_or("Response");
+    let header = format!(
+        "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        status.as_u16(),
+        reason,
         body.len()
     );
     stream.write_all(header.as_bytes()).await?;
@@ -1307,6 +1985,63 @@ mod tests {
             json!({
                 "name": "Mixer",
                 "warranty": { "lifetime": true }
+            })
+        );
+    }
+
+    #[test]
+    fn broker_only_allows_expected_multipart_destinations() {
+        assert!(broker_multipart_path_allowed("/api/v1/documents"));
+        assert!(broker_multipart_path_allowed(
+            "/api/v1/products/8b49ae2f-ec4c-47c9-93ed-c366873c3a82/images"
+        ));
+        assert!(!broker_multipart_path_allowed(
+            "/api/v1/products/not-a-uuid/images"
+        ));
+        assert!(!broker_multipart_path_allowed(
+            "/api/v1/claims/8b49ae2f-ec4c-47c9-93ed-c366873c3a82/images"
+        ));
+    }
+
+    #[test]
+    fn record_key_is_stable_and_honors_an_explicit_submission_id() {
+        let manifest: RecordManifest =
+            serde_json::from_value(json!({"product": {"name": "Mixer"}})).unwrap();
+        assert_eq!(
+            stable_record_key(&manifest).unwrap(),
+            stable_record_key(&manifest).unwrap()
+        );
+
+        let explicit: RecordManifest = serde_json::from_value(json!({
+            "submissionId": "hermes-record-42",
+            "product": {"name": "Mixer"}
+        }))
+        .unwrap();
+        assert_eq!(stable_record_key(&explicit).unwrap(), "hermes-record-42");
+
+        let unsafe_id: RecordManifest = serde_json::from_value(json!({
+            "submissionId": "record-ok\r\nContent-Length: 0",
+            "product": {"name": "Mixer"}
+        }))
+        .unwrap();
+        assert!(stable_record_key(&unsafe_id).is_err());
+    }
+
+    #[test]
+    fn attachment_permissions_merge_with_metadata_validation() {
+        let mut result = json!({
+            "valid": false,
+            "missingPermissions": ["notes:write"]
+        });
+        merge_missing_permissions(
+            &mut result,
+            vec!["images:attach".to_owned(), "notes:write".to_owned()],
+        );
+        assert_eq!(
+            result,
+            json!({
+                "valid": false,
+                "missingPermissions": ["images:attach", "notes:write"]
             })
         );
     }

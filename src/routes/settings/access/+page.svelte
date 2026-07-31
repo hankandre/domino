@@ -5,20 +5,30 @@
   let showInvite = $state(false);
   let copied = $state(false);
   let resetCopied = $state(false);
+  let setupCopied = $state("");
   const permissionOptions = (
     [
+      ["products:read", "View products"],
+      ["products:create", "Add products"],
+      ["products:manage", "Edit and archive products"],
       ["warranties:read", "Read warranties"],
-      ["warranties:write", "Manage products"],
+      ["warranties:create", "Add warranties"],
+      ["warranties:manage", "Edit and remove warranties"],
       ["claims:read", "Read claims"],
       ["claims:create", "Create claims"],
       ["claims:manage", "Manage claims"],
       ["documents:read", "Read documents"],
       ["documents:attach", "Attach documents"],
+      ["documents:manage", "Remove and restore documents"],
+      ["images:attach", "Add product images"],
       ["paperless:discover", "Search and link Paperless documents"],
       ["notes:read", "Read notes"],
       ["notes:write", "Add notes"],
     ] as const
   ).filter(([permission]) => data.grantablePermissions.includes(permission));
+  function hasClaimAccess(ids: readonly string[] | undefined, id: string) {
+    return ids?.includes(id) ?? false;
+  }
 </script>
 
 <svelte:head><title>People & agents · Domino</title></svelte:head>
@@ -82,6 +92,12 @@
       role="status"
     >
       Service-account permissions saved.
+    </div>{/if}
+  {#if form?.claimAccessSaved}<div
+      class="mt-6 border border-green/30 bg-green-soft p-4 text-sm text-green"
+      role="status"
+    >
+      Claim access saved.
     </div>{/if}
   {#if form?.resetUrl}
     <div
@@ -230,6 +246,111 @@
                 class="mt-3 min-h-10 bg-ink px-4 text-xs font-bold text-white"
                 >Save permissions</button
               >
+            </form>
+          </details>
+        {/if}
+        {#if account.kind === "service"}
+          <div class="border-b border-rule bg-paper px-4 py-3">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div class="text-xs font-bold">Credential-isolated setup</div>
+                <p class="mt-1 text-xs text-muted">
+                  Authenticate once, then let the agent use only the broker
+                  socket.
+                </p>
+              </div>
+              <button
+                type="button"
+                class="inline-flex min-h-10 items-center gap-2 border border-rule bg-sheet px-3 text-xs font-bold hover:border-ink"
+                onclick={async () => {
+                  await navigator.clipboard.writeText(
+                    `domino auth login --name "${account.name}" --no-open\ndomino broker serve --listen /run/domino/${account.id}.sock\ndomino --socket /run/domino/${account.id}.sock record create --file product.json --json`,
+                  );
+                  setupCopied = account.id;
+                }}
+              >
+                <Copy size={15} />
+                {setupCopied === account.id ? "Copied setup" : "Copy setup"}
+              </button>
+            </div>
+          </div>
+        {/if}
+        {#if account.canEditClaimAccess && (account.permissions?.includes("*") || account.permissions?.some( (permission) => ["claims:read", "claims:create", "claims:manage"].includes(permission) ))}
+          <details class="border-b border-rule bg-paper px-4 py-3">
+            <summary class="cursor-pointer text-xs font-bold">
+              Claims visible to {account.name}
+            </summary>
+            <form method="POST" action="?/claims" class="mt-4">
+              <input type="hidden" name="actorId" value={account.id} />
+              <fieldset>
+                <legend class="sr-only">Claim access scope</legend>
+                <div class="grid gap-2 sm:grid-cols-2">
+                  <label
+                    class="flex min-h-11 items-center gap-3 border border-rule bg-sheet px-3 text-xs font-bold"
+                  >
+                    <input
+                      type="radio"
+                      name="claimAccessScope"
+                      value="all"
+                      checked={account.claimAccessScope === "all"}
+                      class="size-4 accent-orange"
+                    />
+                    All household claims
+                  </label>
+                  <label
+                    class="flex min-h-11 items-center gap-3 border border-rule bg-sheet px-3 text-xs font-bold"
+                  >
+                    <input
+                      type="radio"
+                      name="claimAccessScope"
+                      value="selected"
+                      checked={account.claimAccessScope === "selected"}
+                      class="size-4 accent-orange"
+                    />
+                    Only selected claims
+                  </label>
+                </div>
+              </fieldset>
+              <div
+                class="mt-3 max-h-64 overflow-y-auto border-t border-ink"
+                aria-label="Available claims"
+              >
+                {#each data.claims as claim}
+                  <label
+                    class="grid min-h-12 grid-cols-[auto_1fr] items-center gap-3 border-b border-rule py-2 text-xs"
+                  >
+                    <input
+                      name="claimId"
+                      type="checkbox"
+                      value={claim.id}
+                      checked={hasClaimAccess(
+                        account.selectedClaimIds,
+                        claim.id,
+                      )}
+                      class="size-4 accent-orange"
+                    />
+                    <span class="min-w-0">
+                      <span class="block font-bold">{claim.reference}</span>
+                      <span class="mt-0.5 block truncate text-muted"
+                        >{claim.issue}</span
+                      >
+                    </span>
+                  </label>
+                {:else}
+                  <p class="border-b border-rule py-4 text-xs text-muted">
+                    No claims have been created yet.
+                  </p>
+                {/each}
+              </div>
+              <p class="mt-2 max-w-2xl text-xs leading-relaxed text-muted">
+                Restricted accounts automatically retain access to claims they
+                create. Product and document views follow this same claim scope.
+              </p>
+              <button
+                class="mt-3 min-h-10 bg-ink px-4 text-xs font-bold text-white"
+              >
+                Save claim access
+              </button>
             </form>
           </details>
         {/if}

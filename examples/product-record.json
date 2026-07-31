@@ -1,0 +1,53 @@
+{
+  "submissionId": "hermes-order-9921",
+  "product": {
+    "name": "Artisan Mixer",
+    "brand": "KitchenAid",
+    "model": "KSM195",
+    "category": "Kitchen appliance",
+    "retailer": "Example Home Store",
+    "orderNumber": "ORDER-9921",
+    "purchaseDate": "2026-07-12",
+    "purchasePriceMinor": 44999,
+    "currency": "USD",
+    "serialNumbers": ["W123456789"]
+  },
+  "warranties": [
+    {
+      "provider": "KitchenAid",
+      "kind": "manufacturer",
+      "startsAt": "2026-07-12",
+      "endsAt": "2027-07-12",
+      "claimUrl": "https://www.kitchenaid.com/service-and-support.html",
+      "claimInstructions": [
+        {
+          "title": "Have the receipt and serial number ready",
+          "required": true
+        }
+      ]
+    }
+  ],
+  "notes": ["Gift receipt is in Paperless."],
+  "sources": [
+    {
+      "kind": "external",
+      "label": "Hermes intake",
+      "externalSystem": "hermes",
+      "externalId": "ORDER-9921"
+    }
+  ],
+  "image": {
+    "url": "https://example.test/images/mixer.jpg"
+  },
+  "documents": [
+    {
+      "path": "./manual.pdf",
+      "name": "Artisan Mixer manual",
+      "kind": "manual"
+    },
+    {
+      "paperlessDocumentId": 4242,
+      "kind": "receipt"
+    }
+  ]
+}

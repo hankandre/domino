@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, or } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { ProductSummary } from "$lib/types";
 import * as schema from "../db/schema";
@@ -7,6 +7,7 @@ type Database = NodePgDatabase<typeof schema>;
 
 export type ProductRelatedReadAccess = {
   claims: boolean;
+  claimIds?: string[];
   documents: boolean;
   notes: boolean;
 };
@@ -128,6 +129,14 @@ export async function listProductSummaries(
               inArray(schema.documents.productId, ids),
               eq(schema.documents.householdId, householdId),
               isNull(schema.documents.trashedAt),
+              access.claimIds === undefined
+                ? undefined
+                : access.claimIds.length
+                  ? or(
+                      isNull(schema.documents.claimId),
+                      inArray(schema.documents.claimId, access.claimIds),
+                    )
+                  : isNull(schema.documents.claimId),
             ),
           )
       : Promise.resolve([]),
@@ -153,7 +162,8 @@ export async function listProductSummaries(
             ),
           )
       : Promise.resolve([]),
-    access.claims
+    access.claims &&
+    (access.claimIds === undefined || access.claimIds.length > 0)
       ? db
           .select()
           .from(schema.claims)
@@ -161,6 +171,9 @@ export async function listProductSummaries(
             and(
               inArray(schema.claims.productId, ids),
               eq(schema.claims.householdId, householdId),
+              access.claimIds === undefined
+                ? undefined
+                : inArray(schema.claims.id, access.claimIds),
             ),
           )
       : Promise.resolve([]),
@@ -265,62 +278,99 @@ export async function getProductDetail(
       ),
     )
     .limit(1);
-  const [warranties, notes, documents, claimRows, images] = await Promise.all([
-    db
-      .select()
-      .from(schema.warranties)
-      .where(eq(schema.warranties.productId, productId)),
-    access.notes
-      ? db
-          .select({
-            id: schema.notes.id,
-            productId: schema.notes.productId,
-            body: schema.notes.body,
-            createdAt: schema.notes.createdAt,
-            updatedAt: schema.notes.updatedAt,
-            authorName: schema.actors.name,
-          })
-          .from(schema.notes)
-          .leftJoin(
-            schema.actors,
-            eq(schema.notes.authorActorId, schema.actors.id),
-          )
-          .where(
-            and(
-              eq(schema.notes.productId, productId),
-              eq(schema.notes.householdId, householdId),
-            ),
-          )
-          .orderBy(desc(schema.notes.createdAt))
-      : Promise.resolve([]),
-    access.documents
-      ? db
-          .select()
-          .from(schema.documents)
-          .where(
-            and(
-              eq(schema.documents.productId, productId),
-              eq(schema.documents.householdId, householdId),
-              isNull(schema.documents.trashedAt),
-            ),
-          )
-      : Promise.resolve([]),
-    access.claims
-      ? db
-          .select()
-          .from(schema.claims)
-          .where(
-            and(
-              eq(schema.claims.productId, productId),
-              eq(schema.claims.householdId, householdId),
-            ),
-          )
-      : Promise.resolve([]),
-    db
-      .select()
-      .from(schema.productImages)
-      .where(eq(schema.productImages.productId, productId)),
-  ]);
+  const [warranties, notes, documents, claimRows, images, sources] =
+    await Promise.all([
+      db
+        .select()
+        .from(schema.warranties)
+        .where(eq(schema.warranties.productId, productId)),
+      access.notes
+        ? db
+            .select({
+              id: schema.notes.id,
+              productId: schema.notes.productId,
+              body: schema.notes.body,
+              createdAt: schema.notes.createdAt,
+              updatedAt: schema.notes.updatedAt,
+              authorName: schema.actors.name,
+            })
+            .from(schema.notes)
+            .leftJoin(
+              schema.actors,
+              eq(schema.notes.authorActorId, schema.actors.id),
+            )
+            .where(
+              and(
+                eq(schema.notes.productId, productId),
+                eq(schema.notes.householdId, householdId),
+              ),
+            )
+            .orderBy(desc(schema.notes.createdAt))
+        : Promise.resolve([]),
+      access.documents
+        ? db
+            .select()
+            .from(schema.documents)
+            .where(
+              and(
+                eq(schema.documents.productId, productId),
+                eq(schema.documents.householdId, householdId),
+                isNull(schema.documents.trashedAt),
+                access.claimIds === undefined
+                  ? undefined
+                  : access.claimIds.length
+                    ? or(
+                        isNull(schema.documents.claimId),
+                        inArray(schema.documents.claimId, access.claimIds),
+                      )
+                    : isNull(schema.documents.claimId),
+              ),
+            )
+        : Promise.resolve([]),
+      access.claims &&
+      (access.claimIds === undefined || access.claimIds.length > 0)
+        ? db
+            .select()
+            .from(schema.claims)
+            .where(
+              and(
+                eq(schema.claims.productId, productId),
+                eq(schema.claims.householdId, householdId),
+                access.claimIds === undefined
+                  ? undefined
+                  : inArray(schema.claims.id, access.claimIds),
+              ),
+            )
+        : Promise.resolve([]),
+      db
+        .select()
+        .from(schema.productImages)
+        .where(eq(schema.productImages.productId, productId)),
+      db
+        .select({
+          id: schema.productSources.id,
+          kind: schema.productSources.kind,
+          label: schema.productSources.label,
+          url: schema.productSources.url,
+          externalSystem: schema.productSources.externalSystem,
+          externalId: schema.productSources.externalId,
+          createdAt: schema.productSources.createdAt,
+          addedByName: schema.actors.name,
+        })
+        .from(schema.productSources)
+        .leftJoin(
+          schema.actors,
+          eq(schema.productSources.addedByActorId, schema.actors.id),
+        )
+        .where(eq(schema.productSources.productId, productId)),
+    ]);
+  const [creator] = product.createdByActorId
+    ? await db
+        .select({ id: schema.actors.id, name: schema.actors.name })
+        .from(schema.actors)
+        .where(eq(schema.actors.id, product.createdByActorId))
+        .limit(1)
+    : [];
   return {
     ...summary,
     productUrl: product.productUrl,
@@ -333,6 +383,8 @@ export async function getProductDetail(
     documents,
     claims: claimRows,
     images,
+    sources,
+    createdBy: creator ?? null,
   };
 }
 
@@ -357,6 +409,7 @@ export async function createProduct(
         purchaseDate: input.purchaseDate,
         purchasePriceMinor: input.purchasePriceMinor,
         currency: input.currency ?? "USD",
+        createdByActorId: actorId,
       })
       .returning();
 

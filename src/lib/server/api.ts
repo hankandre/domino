@@ -25,12 +25,14 @@ import { suggestProductImage } from "./image-suggestions";
 import { authenticateSessionToken, readSessionCookie } from "./auth/oidc";
 import { requireDb } from "./db";
 import {
+  actorClaimAccess,
   actorRoles,
   actors,
   apiCredentials,
   auditEvents,
   claimEvents,
   cliDeviceCodes,
+  documents,
   integrations,
   notes,
   products,
@@ -45,6 +47,13 @@ import {
   setProductArchived,
   updateProduct,
 } from "./domain/products";
+import {
+  createProductRecord,
+  DuplicateProductError,
+  IdempotencyConflictError,
+  productRecordRequestHash,
+  validateProductRecord,
+} from "./domain/product-records";
 import {
   createClaim,
   getClaim,
@@ -84,6 +93,8 @@ type Variables = {
     householdId: string;
     kind: "user" | "service";
     permissions: string[];
+    claimAccessScope: "all" | "selected";
+    claimIds?: string[];
   };
 };
 type Env = { Variables: Variables };
@@ -177,6 +188,42 @@ const warrantyInput = z.object({
     .default([]),
 });
 
+const productSourceInput = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("url"),
+    label: z.string().max(180).optional(),
+    url: httpUrl,
+  }),
+  z.object({
+    kind: z.literal("external"),
+    label: z.string().max(180).optional(),
+    url: httpUrl.optional(),
+    externalSystem: z.string().trim().min(1).max(100),
+    externalId: z.string().trim().min(1).max(300),
+  }),
+  z.object({
+    kind: z.literal("paperless"),
+    label: z.string().max(180).optional(),
+    externalId: z.string().trim().min(1).max(100),
+  }),
+]);
+
+const productRecordInput = z.object({
+  product: productInput.omit({
+    warranty: true,
+    warrantyEndsAt: true,
+    notes: true,
+  }),
+  warranties: z.array(warrantyInput).max(10).default([]),
+  notes: z.array(z.string().trim().min(1).max(10_000)).max(20).default([]),
+  sources: z.array(productSourceInput).max(20).default([]),
+  allowDuplicateOf: z.string().uuid().optional(),
+});
+
+const idempotencyHeaderInput = z.object({
+  "idempotency-key": z.string().trim().min(8).max(200),
+});
+
 const documentKindInput = z.enum([
   "receipt",
   "manual",
@@ -249,6 +296,7 @@ async function authenticateApiCredential(
       actorId: actors.id,
       householdId: actors.householdId,
       kind: actors.kind,
+      claimAccessScope: actors.claimAccessScope,
     })
     .from(apiCredentials)
     .innerJoin(actors, eq(apiCredentials.actorId, actors.id))
@@ -280,11 +328,22 @@ async function authenticateApiCredential(
     .update(apiCredentials)
     .set({ lastUsedAt: new Date(), updatedAt: new Date() })
     .where(eq(apiCredentials.id, credential.credentialId));
+  const claimIds =
+    credential.claimAccessScope === "selected"
+      ? (
+          await database
+            .select({ claimId: actorClaimAccess.claimId })
+            .from(actorClaimAccess)
+            .where(eq(actorClaimAccess.actorId, credential.actorId))
+        ).map((item) => item.claimId)
+      : undefined;
   return {
     id: credential.actorId,
     householdId: credential.householdId,
     kind: credential.kind,
     permissions: [...new Set(grants.flatMap((grant) => grant.permissions))],
+    claimAccessScope: credential.claimAccessScope,
+    claimIds,
   };
 }
 
@@ -298,6 +357,7 @@ app.use("/v1/*", async (c, next) => {
       householdId: "demo-household",
       kind: "user",
       permissions: ["*"],
+      claimAccessScope: "all",
     });
     return next();
   }
@@ -360,6 +420,78 @@ function requirePermission(permission: Permission): MiddlewareHandler<Env> {
     }
     await next();
   };
+}
+
+function requireAnyPermission(required: Permission[]): MiddlewareHandler<Env> {
+  return async (c, next) => {
+    const actor = c.get("actor");
+    if (
+      !actor ||
+      (!actor.permissions.includes("*") &&
+        !required.some((permission) => can(actor.permissions, permission)))
+    ) {
+      return c.json({ error: `Missing one of: ${required.join(", ")}` }, 403);
+    }
+    await next();
+  };
+}
+
+function canAccessClaim(
+  actor: Variables["actor"],
+  claimId: string | undefined,
+) {
+  return (
+    !claimId || actor.claimIds === undefined || actor.claimIds.includes(claimId)
+  );
+}
+
+async function canAccessDocument(
+  actor: Variables["actor"],
+  documentId: string,
+) {
+  const [document] = await requireDb()
+    .select({ claimId: documents.claimId })
+    .from(documents)
+    .where(
+      and(
+        eq(documents.id, documentId),
+        eq(documents.householdId, actor.householdId),
+      ),
+    )
+    .limit(1);
+  return Boolean(
+    document && canAccessClaim(actor, document.claimId ?? undefined),
+  );
+}
+
+function actorHasAny(actor: Variables["actor"], required: Permission[]) {
+  return (
+    actor.permissions.includes("*") ||
+    required.some((permission) => can(actor.permissions, permission))
+  );
+}
+
+function recordMissingPermissions(
+  actor: Variables["actor"],
+  input: z.infer<typeof productRecordInput>,
+) {
+  const missing: Permission[] = [];
+  if (
+    input.warranties.length &&
+    !actorHasAny(actor, ["warranties:create", "warranties:write"])
+  ) {
+    missing.push("warranties:create");
+  }
+  if (input.notes.length && !actorHasAny(actor, ["notes:write"])) {
+    missing.push("notes:write");
+  }
+  if (
+    input.allowDuplicateOf &&
+    !actorHasAny(actor, ["products:manage", "warranties:write"])
+  ) {
+    missing.push("products:manage");
+  }
+  return missing;
 }
 
 const routes = app
@@ -565,6 +697,7 @@ const routes = app
             householdId: "demo-household",
             kind: "user" as const,
             permissions: ["*"],
+            claimAccessScope: "all" as const,
           }
         : await authenticateSessionToken(readSessionCookie(c.req.raw));
       if (!approvingActor) {
@@ -583,10 +716,15 @@ const routes = app
         );
       }
       const requestedPermissions = c.req.valid("json").permissions ?? [
+        "products:read",
+        "products:create",
         "warranties:read",
+        "warranties:create",
         "claims:read",
         "claims:create",
         "documents:read",
+        "documents:attach",
+        "images:attach",
         "notes:read",
         "notes:write",
       ];
@@ -692,6 +830,7 @@ const routes = app
           householdId: approvingActor.householdId,
           kind: "service",
           permissions: requestedPermissions,
+          claimAccessScope: "all",
         },
         expiresAt: Date.now() + 60 * 60_000,
       });
@@ -851,9 +990,108 @@ const routes = app
       return c.json({ revoked: true, actorId: serviceActor.id });
     },
   )
+  .post(
+    "/v1/product-records/validate",
+    requireAnyPermission(["products:create", "warranties:write"]),
+    zValidator("json", productRecordInput),
+    async (c) => {
+      const input = c.req.valid("json");
+      const missingPermissions = recordMissingPermissions(
+        c.get("actor"),
+        input,
+      );
+      if (process.env.DOMINO_DEMO_MODE === "true") {
+        return c.json({
+          valid: missingPermissions.length === 0,
+          duplicates: [],
+          warnings: [],
+          missingPermissions,
+        });
+      }
+      const matches = await validateProductRecord(
+        requireDb(),
+        c.get("actor").householdId,
+        input,
+      );
+      return c.json({
+        valid: missingPermissions.length === 0 && matches.exact.length === 0,
+        duplicates: matches.exact,
+        warnings: matches.warnings,
+        missingPermissions,
+      });
+    },
+  )
+  .post(
+    "/v1/product-records",
+    requireAnyPermission(["products:create", "warranties:write"]),
+    zValidator("header", idempotencyHeaderInput),
+    zValidator("json", productRecordInput),
+    async (c) => {
+      const input = c.req.valid("json");
+      const missingPermissions = recordMissingPermissions(
+        c.get("actor"),
+        input,
+      );
+      if (missingPermissions.length) {
+        return c.json(
+          {
+            error: `Missing permissions for included record components: ${missingPermissions.join(", ")}`,
+            code: "missing_component_permissions",
+            missingPermissions,
+          },
+          403,
+        );
+      }
+      if (process.env.DOMINO_DEMO_MODE === "true") {
+        return c.json(
+          {
+            product: { id: crypto.randomUUID(), ...input.product },
+            warranties: input.warranties,
+            notes: input.notes.map((body) => ({
+              id: crypto.randomUUID(),
+              body,
+            })),
+            sources: input.sources,
+            warnings: [],
+            replayed: false,
+          },
+          201,
+        );
+      }
+      try {
+        const result = await createProductRecord(
+          requireDb(),
+          c.get("actor").householdId,
+          c.get("actor").id,
+          c.req.valid("header")["idempotency-key"],
+          productRecordRequestHash(input),
+          input,
+        );
+        return c.json(result, result.replayed ? 200 : 201);
+      } catch (cause) {
+        if (cause instanceof DuplicateProductError) {
+          return c.json(
+            {
+              error: cause.message,
+              code: "duplicate_product",
+              matches: cause.matches,
+            },
+            409,
+          );
+        }
+        if (cause instanceof IdempotencyConflictError) {
+          return c.json(
+            { error: cause.message, code: "idempotency_conflict" },
+            409,
+          );
+        }
+        throw cause;
+      }
+    },
+  )
   .get(
     "/v1/products",
-    requirePermission("warranties:read"),
+    requireAnyPermission(["products:read", "warranties:read"]),
     zValidator("query", searchQuery),
     async (c) => {
       const query = c.req.valid("query");
@@ -883,7 +1121,7 @@ const routes = app
   )
   .get(
     "/v1/products/:id",
-    requirePermission("warranties:read"),
+    requireAnyPermission(["products:read", "warranties:read"]),
     zValidator("param", idParamInput),
     async (c) => {
       const { id } = c.req.valid("param");
@@ -906,10 +1144,22 @@ const routes = app
   )
   .post(
     "/v1/products",
-    requirePermission("warranties:write"),
+    requireAnyPermission(["products:create", "warranties:write"]),
     zValidator("json", productInput),
     async (c) => {
       const input = c.req.valid("json");
+      if (
+        input.warranty &&
+        !actorHasAny(c.get("actor"), ["warranties:create", "warranties:write"])
+      ) {
+        return c.json({ error: "Missing permission: warranties:create" }, 403);
+      }
+      if (
+        input.notes?.trim() &&
+        !actorHasAny(c.get("actor"), ["notes:write", "warranties:write"])
+      ) {
+        return c.json({ error: "Missing permission: notes:write" }, 403);
+      }
       if (process.env.DOMINO_DEMO_MODE === "true") {
         return c.json({ product: { id: crypto.randomUUID(), ...input } }, 201);
       }
@@ -931,7 +1181,7 @@ const routes = app
   )
   .patch(
     "/v1/products/:id",
-    requirePermission("warranties:write"),
+    requireAnyPermission(["products:manage", "warranties:write"]),
     zValidator("param", idParamInput),
     zValidator("json", productInput.partial()),
     async (c) => {
@@ -955,7 +1205,7 @@ const routes = app
   )
   .delete(
     "/v1/products/:id",
-    requirePermission("warranties:write"),
+    requireAnyPermission(["products:manage", "warranties:write"]),
     zValidator("param", idParamInput),
     async (c) => {
       const { id } = c.req.valid("param");
@@ -976,7 +1226,7 @@ const routes = app
   )
   .post(
     "/v1/products/:id/restore",
-    requirePermission("warranties:write"),
+    requireAnyPermission(["products:manage", "warranties:write"]),
     zValidator("param", idParamInput),
     async (c) => {
       const { id } = c.req.valid("param");
@@ -997,7 +1247,7 @@ const routes = app
   )
   .post(
     "/v1/products/:id/warranties",
-    requirePermission("warranties:write"),
+    requireAnyPermission(["warranties:create", "warranties:write"]),
     zValidator("param", idParamInput),
     zValidator("json", warrantyInput),
     async (c) => {
@@ -1052,7 +1302,7 @@ const routes = app
   )
   .patch(
     "/v1/warranties/:id",
-    requirePermission("warranties:write"),
+    requireAnyPermission(["warranties:manage", "warranties:write"]),
     zValidator("param", idParamInput),
     zValidator("json", warrantyInput.partial()),
     async (c) => {
@@ -1102,7 +1352,7 @@ const routes = app
   )
   .delete(
     "/v1/warranties/:id",
-    requirePermission("warranties:write"),
+    requireAnyPermission(["warranties:manage", "warranties:write"]),
     zValidator("param", idParamInput),
     async (c) => {
       const { id } = c.req.valid("param");
@@ -1138,7 +1388,7 @@ const routes = app
   )
   .post(
     "/v1/image-suggestions",
-    requirePermission("warranties:write"),
+    requireAnyPermission(["images:attach", "warranties:write"]),
     zValidator("json", z.object({ productUrl: httpUrl })),
     async (c) => {
       if (process.env.DOMINO_DEMO_MODE === "true") {
@@ -1167,7 +1417,7 @@ const routes = app
   )
   .post(
     "/v1/products/:id/images/from-url",
-    requirePermission("warranties:write"),
+    requireAnyPermission(["images:attach", "warranties:write"]),
     zValidator("param", idParamInput),
     zValidator("json", z.object({ imageUrl: httpUrl })),
     async (c) => {
@@ -1207,7 +1457,7 @@ const routes = app
   )
   .post(
     "/v1/products/:id/images",
-    requirePermission("warranties:write"),
+    requireAnyPermission(["images:attach", "warranties:write"]),
     zValidator("param", idParamInput),
     zValidator("form", productImageUploadInput),
     async (c) => {
@@ -1240,7 +1490,7 @@ const routes = app
   )
   .get(
     "/v1/product-images/:id/content",
-    requirePermission("warranties:read"),
+    requireAnyPermission(["products:read", "warranties:read"]),
     zValidator("param", idParamInput),
     async (c) => {
       const { id } = c.req.valid("param");
@@ -1278,6 +1528,7 @@ const routes = app
         requireDb(),
         c.get("actor").householdId,
         c.req.valid("query").trash === "true",
+        c.get("actor").claimIds,
       );
       return c.json({ documents });
     },
@@ -1295,6 +1546,9 @@ const routes = app
       }
       try {
         const body = c.req.valid("form");
+        if (!canAccessClaim(c.get("actor"), body.claimId)) {
+          return c.json({ error: "Claim not found." }, 404);
+        }
         const document = await attachDocument(
           requireDb(),
           c.get("actor").householdId,
@@ -1341,6 +1595,9 @@ const routes = app
         );
       }
       try {
+        if (!canAccessClaim(c.get("actor"), c.req.valid("json").claimId)) {
+          return c.json({ error: "Claim not found." }, 404);
+        }
         const document = await linkPaperlessDocument(
           requireDb(),
           c.get("actor").householdId,
@@ -1406,6 +1663,9 @@ const routes = app
     zValidator("param", idParamInput),
     async (c) => {
       const { id } = c.req.valid("param");
+      if (!(await canAccessDocument(c.get("actor"), id))) {
+        return c.json({ error: "Document not found." }, 404);
+      }
       try {
         const document = await refreshPaperlessDocument(
           requireDb(),
@@ -1434,6 +1694,9 @@ const routes = app
     zValidator("param", idParamInput),
     async (c) => {
       const { id } = c.req.valid("param");
+      if (!(await canAccessDocument(c.get("actor"), id))) {
+        return c.json({ error: "Document not found." }, 404);
+      }
       if (process.env.DOMINO_DEMO_MODE === "true") {
         return c.json({ error: "Demo documents do not contain files." }, 404);
       }
@@ -1471,10 +1734,13 @@ const routes = app
   )
   .delete(
     "/v1/documents/:id",
-    requirePermission("documents:attach"),
+    requirePermission("documents:manage"),
     zValidator("param", idParamInput),
     async (c) => {
       const { id } = c.req.valid("param");
+      if (!(await canAccessDocument(c.get("actor"), id))) {
+        return c.json({ error: "Document not found." }, 404);
+      }
       if (process.env.DOMINO_DEMO_MODE === "true")
         return c.json({ unlinked: true, trashed: false });
       const result = await trashDocument(
@@ -1490,10 +1756,13 @@ const routes = app
   )
   .post(
     "/v1/documents/:id/restore",
-    requirePermission("documents:attach"),
+    requirePermission("documents:manage"),
     zValidator("param", idParamInput),
     async (c) => {
       const { id } = c.req.valid("param");
+      if (!(await canAccessDocument(c.get("actor"), id))) {
+        return c.json({ error: "Document not found." }, 404);
+      }
       if (process.env.DOMINO_DEMO_MODE === "true") {
         return c.json({ document: { id, trashedAt: null } });
       }
@@ -1638,7 +1907,11 @@ const routes = app
                 ]
               : [],
           )
-        : await listClaims(requireDb(), c.get("actor").householdId);
+        : await listClaims(
+            requireDb(),
+            c.get("actor").householdId,
+            c.get("actor").claimIds,
+          );
     return c.json({ claims });
   })
   .get(
@@ -1679,6 +1952,7 @@ const routes = app
           documents: relatedAccess.documents,
           notes: relatedAccess.notes,
         },
+        c.get("actor").claimIds,
       );
       return claim
         ? c.json({ claim })
@@ -1696,6 +1970,7 @@ const routes = app
         c.get("actor").householdId,
         c.req.valid("param").id,
         { documents: false, notes: true },
+        c.get("actor").claimIds,
       );
       return claim
         ? c.json({ notes: claim.notes })
@@ -1723,10 +1998,16 @@ const routes = app
         );
       }
       const database = requireDb();
-      const claim = await getClaim(database, c.get("actor").householdId, id, {
-        documents: false,
-        notes: false,
-      });
+      const claim = await getClaim(
+        database,
+        c.get("actor").householdId,
+        id,
+        {
+          documents: false,
+          notes: false,
+        },
+        c.get("actor").claimIds,
+      );
       if (!claim) return c.json({ error: "Claim not found" }, 404);
       const note = await database.transaction(async (tx) => {
         const [created] = await tx
@@ -1788,6 +2069,9 @@ const routes = app
     async (c) => {
       const { id } = c.req.valid("param");
       const input = c.req.valid("json");
+      if (c.get("actor").claimIds && !c.get("actor").claimIds!.includes(id)) {
+        return c.json({ error: "Claim not found" }, 404);
+      }
       if (input.status === "resolved" && !input.resolution?.trim()) {
         if (process.env.DOMINO_DEMO_MODE === "true") {
           return c.json(
@@ -1800,6 +2084,7 @@ const routes = app
           c.get("actor").householdId,
           id,
           { documents: false, notes: false },
+          c.get("actor").claimIds,
         );
         if (!existing) return c.json({ error: "Claim not found" }, 404);
         if (!existing.resolution?.trim()) {

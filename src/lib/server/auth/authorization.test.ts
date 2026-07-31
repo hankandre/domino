@@ -5,6 +5,7 @@ import {
   hasPermission,
   requireAnyPagePermission,
   requirePagePermission,
+  relatedReadAccess,
 } from "./authorization";
 
 function actor(permissions: string[]): NonNullable<App.Locals["actor"]> {
@@ -13,6 +14,7 @@ function actor(permissions: string[]): NonNullable<App.Locals["actor"]> {
     householdId: "household-one",
     kind: "user",
     permissions,
+    claimAccessScope: "all",
   };
 }
 
@@ -91,5 +93,20 @@ describe("page authorization", () => {
         "integrations:manage",
       ]),
     ).not.toThrow();
+  });
+
+  test("carries selected claim ids into related-data projections", () => {
+    const restricted = {
+      ...actor(["claims:read", "documents:read"]),
+      claimAccessScope: "selected" as const,
+      claimIds: ["claim-one"],
+    };
+
+    expect(relatedReadAccess(restricted)).toEqual({
+      claims: true,
+      claimIds: ["claim-one"],
+      documents: true,
+      notes: false,
+    });
   });
 });

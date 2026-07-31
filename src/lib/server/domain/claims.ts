@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import * as schema from "../db/schema";
 
@@ -34,7 +34,12 @@ export function projectClaimRelatedData<
   } as T;
 }
 
-export async function listClaims(db: Database, householdId: string) {
+export async function listClaims(
+  db: Database,
+  householdId: string,
+  claimIds?: string[],
+) {
+  if (claimIds?.length === 0) return [];
   const rows = await db
     .select({
       claim: schema.claims,
@@ -48,6 +53,9 @@ export async function listClaims(db: Database, householdId: string) {
       and(
         eq(schema.claims.householdId, householdId),
         eq(schema.products.householdId, householdId),
+        claimIds === undefined
+          ? undefined
+          : inArray(schema.claims.id, claimIds),
       ),
     )
     .orderBy(desc(schema.claims.updatedAt));
@@ -66,7 +74,9 @@ export async function getClaim(
   householdId: string,
   claimId: string,
   access: ClaimRelatedReadAccess,
+  claimIds?: string[],
 ) {
+  if (claimIds && !claimIds.includes(claimId)) return null;
   const [row] = await db
     .select({
       claim: schema.claims,
@@ -214,6 +224,17 @@ export async function createClaim(
         openedByActorId: actorId,
       })
       .returning();
+    const [actor] = await tx
+      .select({ claimAccessScope: schema.actors.claimAccessScope })
+      .from(schema.actors)
+      .where(eq(schema.actors.id, actorId))
+      .limit(1);
+    if (actor?.claimAccessScope === "selected") {
+      await tx
+        .insert(schema.actorClaimAccess)
+        .values({ actorId, claimId: claim.id, grantedByActorId: actorId })
+        .onConflictDoNothing();
+    }
     await tx.insert(schema.claimEvents).values({
       claimId: claim.id,
       actorId,

@@ -1,11 +1,14 @@
 import type { PageServerLoad } from "./$types";
 import { eq } from "drizzle-orm";
-import { requirePagePermission } from "$lib/server/auth/authorization";
+import { requireAnyPagePermission } from "$lib/server/auth/authorization";
 import { requireDb } from "$lib/server/db";
 import { households } from "$lib/server/db/schema";
 
 export const load: PageServerLoad = async ({ locals }) => {
-  requirePagePermission(locals.actor, "warranties:write");
+  requireAnyPagePermission(locals.actor, [
+    "products:create",
+    "warranties:write",
+  ]);
   if (process.env.DOMINO_DEMO_MODE === "true")
     return { defaultDocumentBackend: "paperless" };
   const [household] = await requireDb()

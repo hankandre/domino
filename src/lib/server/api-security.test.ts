@@ -160,4 +160,92 @@ describe("API browser boundaries", () => {
 
     expect(response.status).toBe(413);
   });
+
+  test("validates the permissions needed by each product-record component", async () => {
+    process.env.DOMINO_DEMO_MODE = "true";
+    const token = await issueDemoCredential(["products:create"]);
+    const response = await app.request("/api/v1/product-records/validate", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        product: { name: "Workshop radio" },
+        warranties: [{ provider: "Acme", lifetime: true }],
+        notes: ["Receipt was in the box."],
+      }),
+    });
+    const body = (await response.json()) as {
+      valid: boolean;
+      missingPermissions: string[];
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.valid).toBe(false);
+    expect(body.missingPermissions).toEqual([
+      "warranties:create",
+      "notes:write",
+    ]);
+  });
+
+  test("requires an idempotency key for product-record creation", async () => {
+    process.env.DOMINO_DEMO_MODE = "true";
+    const token = await issueDemoCredential(["products:create"]);
+    const response = await app.request("/api/v1/product-records", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ product: { name: "Workshop radio" } }),
+    });
+
+    expect(response.status).toBe(400);
+  });
+
+  test("allows a create-only account to submit idempotent product metadata", async () => {
+    process.env.DOMINO_DEMO_MODE = "true";
+    const token = await issueDemoCredential(["products:create"]);
+    const response = await app.request("/api/v1/product-records", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+        "idempotency-key": "record-test-2026",
+      },
+      body: JSON.stringify({
+        product: { name: "Workshop radio" },
+        sources: [
+          {
+            kind: "external",
+            externalSystem: "hermes",
+            externalId: "record-42",
+          },
+        ],
+      }),
+    });
+    const body = (await response.json()) as {
+      product: { id: string; name: string };
+      sources: unknown[];
+    };
+
+    expect(response.status).toBe(201);
+    expect(body.product.name).toBe("Workshop radio");
+    expect(body.sources).toHaveLength(1);
+  });
+
+  test("does not let an attachment-only account remove documents", async () => {
+    process.env.DOMINO_DEMO_MODE = "true";
+    const token = await issueDemoCredential(["documents:attach"]);
+    const response = await app.request(
+      `/api/v1/documents/${crypto.randomUUID()}`,
+      {
+        method: "DELETE",
+        headers: { authorization: `Bearer ${token}` },
+      },
+    );
+
+    expect(response.status).toBe(403);
+  });
 });

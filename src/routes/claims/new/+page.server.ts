@@ -1,12 +1,15 @@
 import type { PageServerLoad } from "./$types";
 import { demoProducts } from "$lib/demo";
-import { requirePagePermission } from "$lib/server/auth/authorization";
+import {
+  requireAnyPagePermission,
+  requirePagePermission,
+} from "$lib/server/auth/authorization";
 import { requireDb } from "$lib/server/db";
 import { listProductSummaries } from "$lib/server/domain/products";
 
 export const load: PageServerLoad = async ({ locals, url }) => {
   requirePagePermission(locals.actor, "claims:create");
-  requirePagePermission(locals.actor, "warranties:read");
+  requireAnyPagePermission(locals.actor, ["products:read", "warranties:read"]);
   return {
     products:
       process.env.DOMINO_DEMO_MODE === "true"
